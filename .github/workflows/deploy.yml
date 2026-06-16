@@ -1,0 +1,37 @@
+name: Deploy Galeria
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to server
+        env:
+          SSH_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          echo "$SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='client/node_modules' \
+            --exclude='client/dist' \
+            --exclude='persist' \
+            -e "ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no" \
+            ./ $SSH_USER@$SSH_HOST:/opt/apps/galeria/
+
+      - name: Build & restart container
+        env:
+          SSH_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST \
+            "cd /opt/apps/galeria && sudo docker compose build --no-cache && sudo docker compose up -d && sudo docker image prune -f"

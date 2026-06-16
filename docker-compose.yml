@@ -1,0 +1,23 @@
+services:
+  galeria:
+    container_name: galeria
+    build:
+      context: .
+      args:
+        VITE_BASE_PATH: /galeria
+    restart: unless-stopped
+    environment:
+      PORT: 3002
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      UPLOADS_DIR: /app/persist/uploads
+      THUMBS_DIR: /app/persist/thumbs
+      DB_PATH: /app/persist/db/galeria.db
+    volumes:
+      - ./persist:/app/persist
+    networks:
+      - webproxy
+
+networks:
+  webproxy:
+    external: true

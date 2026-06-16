@@ -1,0 +1,8 @@
+node_modules/
+client/node_modules/
+client/dist/
+persist/uploads/
+persist/thumbs/
+persist/db/
+.env
+*.db
