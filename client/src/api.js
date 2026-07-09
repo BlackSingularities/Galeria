@@ -37,7 +37,9 @@ export const adminGetPhotos   = () => req('GET',  '/admin/photos')
 export const adminUpdatePhoto = (id, data) => req('PUT', `/admin/photos/${id}`, data)
 export const adminDeletePhoto = (id) => req('DELETE', `/admin/photos/${id}`)
 
-export async function adminUpload(albumId, files, onProgress) {
+const UPLOAD_BATCH_SIZE = 50
+
+function uploadBatch(albumId, files, onProgress) {
   const token = getToken()
   const fd = new FormData()
   for (const f of files) fd.append('photos', f)
@@ -51,9 +53,34 @@ export async function adminUpload(albumId, files, onProgress) {
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     if (onProgress) xhr.upload.onprogress = (e) => onProgress(e.loaded / e.total)
     xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) return reject(new Error('Upload failed'))
       try { const d = JSON.parse(xhr.responseText); resolve(d) } catch { reject(new Error('Upload failed')) }
     }
     xhr.onerror = () => reject(new Error('Upload failed'))
     xhr.send(fd)
   })
+}
+
+export async function adminUpload(albumId, files, onProgress) {
+  const list = Array.from(files)
+  const totalBytes = list.reduce((sum, file) => sum + file.size, 0)
+  let uploadedBeforeBatch = 0
+  let uploaded = 0
+  const results = []
+
+  for (let i = 0; i < list.length; i += UPLOAD_BATCH_SIZE) {
+    const batch = list.slice(i, i + UPLOAD_BATCH_SIZE)
+    const batchBytes = batch.reduce((sum, file) => sum + file.size, 0)
+    const res = await uploadBatch(albumId, batch, (batchProgress) => {
+      if (onProgress && totalBytes > 0) {
+        onProgress((uploadedBeforeBatch + batchBytes * batchProgress) / totalBytes)
+      }
+    })
+    uploadedBeforeBatch += batchBytes
+    uploaded += res.uploaded || 0
+    results.push(...(res.results || []))
+  }
+
+  if (onProgress) onProgress(1)
+  return { uploaded, results }
 }

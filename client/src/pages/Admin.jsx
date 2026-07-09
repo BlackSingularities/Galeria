@@ -56,6 +56,7 @@ function LoginScreen({ onLogin }) {
 
 // ── Upload dropzone ───────────────────────────────────────────────────────────
 function Dropzone({ albumId, onDone }) {
+  const maxFiles = 1000
   const [files, setFiles]       = useState([])
   const [progress, setProgress] = useState(0)
   const [uploading, setUploading] = useState(false)
@@ -63,7 +64,16 @@ function Dropzone({ albumId, onDone }) {
   const inputRef = useRef()
   const dragRef  = useRef(0)
 
-  const add = (fl) => setFiles(prev => [...prev, ...Array.from(fl)])
+  const add = (fl) => {
+    const incoming = Array.from(fl)
+    setFiles(prev => {
+      const next = [...prev, ...incoming].slice(0, maxFiles)
+      if (prev.length + incoming.length > maxFiles) {
+        setTimeout(() => alert(`Możesz dodać maksymalnie ${maxFiles} zdjęć naraz.`), 0)
+      }
+      return next
+    })
+  }
 
   const onDrop = (e) => {
     e.preventDefault(); dragRef.current = 0
@@ -99,7 +109,7 @@ function Dropzone({ albumId, onDone }) {
       >
         <div className="dropzone-icon">📂</div>
         <p className="dropzone-text">Kliknij lub przeciągnij zdjęcia tutaj</p>
-        <p className="dropzone-hint">JPG, PNG, WEBP, TIFF · max 150 MB / plik · do 50 plików naraz</p>
+        <p className="dropzone-hint">JPG, PNG, WEBP, TIFF · max 150 MB / plik · do 1000 plików naraz</p>
         <input ref={inputRef} type="file" multiple accept="image/*" style={{ display:'none' }}
           onChange={e => add(e.target.files)} />
       </div>

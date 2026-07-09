@@ -47,6 +47,7 @@ const MAIN_IMAGE_MAX_SIZE = 3000
 const MAIN_IMAGE_QUALITY = 90
 const THUMB_MAX_SIZE = 800
 const THUMB_QUALITY = 82
+const MAX_UPLOAD_FILES = 1000
 
 async function processUploadedPhoto(file) {
   const baseName = path.basename(file.filename, path.extname(file.filename))
@@ -184,7 +185,7 @@ app.delete('/api/admin/albums/:id', requireAdmin, (req, res) => {
 })
 
 // Upload to album
-app.post('/api/admin/albums/:id/upload', requireAdmin, upload.array('photos', 50), async (req, res) => {
+app.post('/api/admin/albums/:id/upload', requireAdmin, upload.array('photos', MAX_UPLOAD_FILES), async (req, res) => {
   const db = getDb()
   const albumId = parseInt(req.params.id)
   const results = []
@@ -202,7 +203,7 @@ app.post('/api/admin/albums/:id/upload', requireAdmin, upload.array('photos', 50
 })
 
 // Upload to portfolio (no album)
-app.post('/api/admin/portfolio/upload', requireAdmin, upload.array('photos', 50), async (req, res) => {
+app.post('/api/admin/portfolio/upload', requireAdmin, upload.array('photos', MAX_UPLOAD_FILES), async (req, res) => {
   const db = getDb()
   const results = []
 
