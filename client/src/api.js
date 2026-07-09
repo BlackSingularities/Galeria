@@ -37,7 +37,7 @@ export const adminGetPhotos   = () => req('GET',  '/admin/photos')
 export const adminUpdatePhoto = (id, data) => req('PUT', `/admin/photos/${id}`, data)
 export const adminDeletePhoto = (id) => req('DELETE', `/admin/photos/${id}`)
 
-const UPLOAD_BATCH_SIZE = 50
+const UPLOAD_BATCH_SIZE = 1
 
 function uploadBatch(albumId, files, onProgress) {
   const token = getToken()
@@ -53,7 +53,9 @@ function uploadBatch(albumId, files, onProgress) {
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     if (onProgress) xhr.upload.onprogress = (e) => onProgress(e.loaded / e.total)
     xhr.onload = () => {
-      if (xhr.status < 200 || xhr.status >= 300) return reject(new Error('Upload failed'))
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return reject(new Error(xhr.status === 413 ? 'Plik jest większy niż limit uploadu serwera.' : `Upload failed (${xhr.status})`))
+      }
       try { const d = JSON.parse(xhr.responseText); resolve(d) } catch { reject(new Error('Upload failed')) }
     }
     xhr.onerror = () => reject(new Error('Upload failed'))
