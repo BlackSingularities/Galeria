@@ -43,6 +43,35 @@ const upload = multer({
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
+const MAIN_IMAGE_MAX_SIZE = 3000
+const MAIN_IMAGE_QUALITY = 90
+const THUMB_MAX_SIZE = 800
+const THUMB_QUALITY = 82
+
+async function processUploadedPhoto(file) {
+  const baseName = path.basename(file.filename, path.extname(file.filename))
+  const filename = `${baseName}.jpg`
+  const thumb = `t_${filename}`
+  const outputPath = path.join(UPLOADS_DIR, filename)
+  const tempPath = path.join(UPLOADS_DIR, `${baseName}.processed.jpg`)
+
+  const info = await sharp(file.path)
+    .rotate()
+    .resize(MAIN_IMAGE_MAX_SIZE, MAIN_IMAGE_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: MAIN_IMAGE_QUALITY, progressive: true })
+    .toFile(tempPath)
+
+  try { fs.unlinkSync(file.path) } catch {}
+  fs.renameSync(tempPath, outputPath)
+
+  await sharp(outputPath)
+    .resize(THUMB_MAX_SIZE, THUMB_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: THUMB_QUALITY, progressive: true })
+    .toFile(path.join(THUMBS_DIR, thumb))
+
+  return { filename, thumb, width: info.width, height: info.height, fileSize: info.size }
+}
+
 function requireAdmin(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '')
   try {
@@ -162,15 +191,10 @@ app.post('/api/admin/albums/:id/upload', requireAdmin, upload.array('photos', 50
 
   for (const file of req.files || []) {
     try {
-      const thumbName = `t_${file.filename}.jpg`
-      const info = await sharp(file.path).metadata()
-      await sharp(file.path)
-        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 82, progressive: true })
-        .toFile(path.join(THUMBS_DIR, thumbName))
+      const processed = await processUploadedPhoto(file)
       const r = db.prepare(
         'INSERT INTO photos (album_id,filename,thumb,original_name,width,height,file_size) VALUES (?,?,?,?,?,?,?)'
-      ).run(albumId, file.filename, thumbName, file.originalname, info.width, info.height, file.size)
+      ).run(albumId, processed.filename, processed.thumb, file.originalname, processed.width, processed.height, processed.fileSize)
       results.push({ id: r.lastInsertRowid })
     } catch (e) { console.error('upload err:', e.message) }
   }
@@ -184,15 +208,10 @@ app.post('/api/admin/portfolio/upload', requireAdmin, upload.array('photos', 50)
 
   for (const file of req.files || []) {
     try {
-      const thumbName = `t_${file.filename}.jpg`
-      const info = await sharp(file.path).metadata()
-      await sharp(file.path)
-        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 82, progressive: true })
-        .toFile(path.join(THUMBS_DIR, thumbName))
+      const processed = await processUploadedPhoto(file)
       const r = db.prepare(
         'INSERT INTO photos (album_id,filename,thumb,original_name,width,height,file_size,is_portfolio) VALUES (NULL,?,?,?,?,?,?,1)'
-      ).run(file.filename, thumbName, file.originalname, info.width, info.height, file.size)
+      ).run(processed.filename, processed.thumb, file.originalname, processed.width, processed.height, processed.fileSize)
       results.push({ id: r.lastInsertRowid })
     } catch (e) { console.error('upload err:', e.message) }
   }
