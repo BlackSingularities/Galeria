@@ -239,20 +239,24 @@ export default function Lightbox({
           )}
           {!loaded && <div className="lb-spinner" />}
 
-          <img
+          <div
             key={photo.id}
-            src={protectedPublic ? thumbUrl(photo.thumb, mediaToken) : fileUrl(photo.filename, mediaToken)}
-            alt={photo.display_name || ''}
-            className="lb-img"
+            className={`lb-img-wrap ${protectedPublic ? 'with-watermark' : ''}`}
             style={{
               opacity: fade && loaded ? 1 : 0,
               transition: 'opacity .25s ease',
               ...(zoom ? { width: photo.width, height: photo.height, maxWidth: 'none', maxHeight: 'none' } : {}),
             }}
-            onLoad={() => setLoaded(true)}
             onClick={!zoom ? (e) => { e.stopPropagation(); setPlaying(false); next() } : undefined}
-            draggable={false}
-          />
+          >
+            <img
+              src={protectedPublic ? thumbUrl(photo.thumb, mediaToken) : fileUrl(photo.filename, mediaToken)}
+              alt={photo.display_name || ''}
+              className="lb-img"
+              onLoad={() => setLoaded(true)}
+              draggable={false}
+            />
+          </div>
         </div>
 
         {/* Details panel */}

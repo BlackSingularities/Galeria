@@ -193,7 +193,6 @@ export default function Grid({
             }}
           >
             <PhotoImg photo={photo} mediaToken={mediaToken} />
-            {protectedPublic && <div className="photo-watermark" aria-hidden="true">Adam Rędzikowski</div>}
             <div className="photo-item-overlay" />
             {showTileInfo && (photo.display_name || photo.camera_model || photo.taken_at) && (
               <div className="photo-item-info">
