@@ -58,11 +58,10 @@ export default function Lightbox({
 
   // Preload the neighbouring full-resolution images so navigation feels instant.
   useEffect(() => {
-    const mediaSrc = (p) => protectedPublic ? thumbUrl(p.thumb, mediaToken) : fileUrl(p.filename, mediaToken)
-    const preload = (i) => { const p = photos[i]; if (p) { const img = new Image(); img.src = mediaSrc(p) } }
+    const preload = (i) => { const p = photos[i]; if (p) { const img = new Image(); img.src = fileUrl(p.filename, mediaToken) } }
     preload((idx + 1) % total)
     preload((idx - 1 + total) % total)
-  }, [idx, total, photos, mediaToken, protectedPublic])
+  }, [idx, total, photos, mediaToken])
 
   useEffect(() => {
     const handler = (e) => {
@@ -250,7 +249,7 @@ export default function Lightbox({
             onClick={!zoom ? (e) => { e.stopPropagation(); setPlaying(false); next() } : undefined}
           >
             <img
-              src={protectedPublic ? thumbUrl(photo.thumb, mediaToken) : fileUrl(photo.filename, mediaToken)}
+              src={fileUrl(photo.filename, mediaToken)}
               alt={photo.display_name || ''}
               className="lb-img"
               onLoad={() => setLoaded(true)}

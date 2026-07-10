@@ -66,9 +66,8 @@ const authLimiter = rateLimit({
 // Listing endpoints already require a password/token, but the raw file URLs
 // used to be served unconditionally by express.static — anyone who learned a
 // filename could fetch it forever. This middleware re-checks access on every
-// single file request. Thumbnails stay public for display; original portfolio
-// uploads require admin access, while album originals require album/admin access
-// when the album is password-protected.
+// single file request. Portfolio originals and thumbnails stay public for
+// display; password-protected album originals require album/admin access.
 function protectMedia(req, res, next) {
   const db = getDb()
   const filename = path.basename(req.path)
@@ -79,6 +78,7 @@ function protectMedia(req, res, next) {
 
   if (!photo) return res.status(404).end()
   if (isThumb) return next()
+  if (photo.is_portfolio) return next()
 
   const token = req.query.t || req.headers.authorization?.replace('Bearer ', '')
   try {
@@ -266,7 +266,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
 app.get('/api/portfolio', (req, res) => {
   const db = getDb()
   const photos = db.prepare(`
-    SELECT p.id, p.thumb, p.display_name, p.width, p.height, p.file_size, p.sort_order, p.is_portfolio,
+    SELECT p.id, p.filename, p.thumb, p.display_name, p.width, p.height, p.file_size, p.sort_order, p.is_portfolio,
       p.created_at, p.taken_at, p.camera_make, p.camera_model, p.lens, p.focal_length,
       p.aperture, p.shutter_speed, p.iso, p.blur_data_url
     FROM photos p LEFT JOIN albums a ON p.album_id = a.id
