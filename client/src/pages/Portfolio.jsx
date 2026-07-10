@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getPortfolio, thumbUrl } from '../api'
+import { getPortfolio, fileUrl } from '../api'
 import Grid from '../components/Grid'
 import SkeletonGrid from '../components/SkeletonGrid'
 import BackToTop from '../components/BackToTop'
@@ -45,7 +45,7 @@ export default function Portfolio() {
       <div className="hero">
         <div
           className={`hero-bg ${heroPhoto ? 'has-image' : ''}`}
-          style={heroPhoto ? { backgroundImage: `url(${thumbUrl(heroPhoto.thumb)})` } : undefined}
+          style={heroPhoto ? { backgroundImage: `url(${fileUrl(heroPhoto.filename)})` } : undefined}
         />
         <div className="hero-overlay" />
         <div className="hero-content">
