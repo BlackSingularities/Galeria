@@ -9,6 +9,9 @@ RUN npm run build
 
 FROM node:20-alpine
 WORKDIR /app
+# better-sqlite3 doesn't always ship a prebuilt binary for musl/Alpine — these
+# let npm fall back to compiling it from source instead of failing the build.
+RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY server.js db.js ./
