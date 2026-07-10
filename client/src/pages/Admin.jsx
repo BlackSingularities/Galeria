@@ -474,7 +474,7 @@ function TabPortfolio() {
       <div className="divider" />
 
       {!loading && photos.length > 1 && (
-        <p style={{ color:'var(--text-3)', fontSize:12, marginBottom:16 }}>Przeciągnij zdjęcia, aby zmienić kolejność wyświetlania.</p>
+        <p style={{ color:'var(--text-3)', fontSize:12, marginBottom:16 }}>Zdjęcia są sortowane automatycznie od najnowszych według daty wykonania z metadanych, a gdy jej brak — według daty dodania.</p>
       )}
 
       {loading ? <div className="spinner" /> : (
@@ -482,8 +482,6 @@ function TabPortfolio() {
           photos={photos}
           adminMode
           selectable
-          reorderable
-          onReorder={handleReorder}
           selected={selected}
           onSelect={toggleSelect}
           onDelete={deletePhoto}
@@ -647,15 +645,13 @@ function TabAlbumManage({ album, onBack, onAlbumUpdated }) {
       <div className="divider" />
 
       {!loading && photos.length > 1 && (
-        <p style={{ color:'var(--text-3)', fontSize:12, marginBottom:16 }}>Przeciągnij, aby zmienić kolejność. Kliknij gwiazdkę, aby ustawić okładkę albumu.</p>
+        <p style={{ color:'var(--text-3)', fontSize:12, marginBottom:16 }}>Zdjęcia są sortowane automatycznie od najnowszych według daty wykonania z metadanych. Kliknij gwiazdkę, aby ustawić okładkę albumu.</p>
       )}
 
       {loading ? <div className="spinner" /> : (
         <Grid
           photos={photos}
           adminMode
-          reorderable
-          onReorder={handleReorder}
           selected={[]}
           onSelect={() => {}}
           onDelete={deletePhoto}

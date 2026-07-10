@@ -62,6 +62,8 @@ const authLimiter = rateLimit({
   message: { error: 'Zbyt wiele prób logowania. Spróbuj ponownie za kilkanaście minut.' },
 })
 
+const PHOTO_DATE_ORDER_DESC = "datetime(COALESCE(NULLIF(p.taken_at, ''), p.created_at)) DESC, p.created_at DESC, p.id DESC"
+
 // ── Media access gate ────────────────────────────────────────────────────────
 // Listing endpoints already require a password/token, but the raw file URLs
 // used to be served unconditionally by express.static — anyone who learned a
@@ -271,7 +273,7 @@ app.get('/api/portfolio', (req, res) => {
       p.aperture, p.shutter_speed, p.iso, p.blur_data_url
     FROM photos p LEFT JOIN albums a ON p.album_id = a.id
     WHERE p.is_portfolio = 1
-    ORDER BY p.sort_order ASC, p.created_at DESC
+    ORDER BY ${PHOTO_DATE_ORDER_DESC}
   `).all()
   res.json(photos)
 })
@@ -299,9 +301,11 @@ app.post('/api/albums/:slug/share', requireAlbumAccess, (req, res) => {
 
 app.get('/api/albums/:slug', requireAlbumAccess, (req, res) => {
   const db = getDb()
-  const photos = db.prepare(
-    'SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order ASC, created_at ASC'
-  ).all(req.album.id)
+  const photos = db.prepare(`
+    SELECT * FROM photos p
+    WHERE album_id = ?
+    ORDER BY ${PHOTO_DATE_ORDER_DESC}
+  `).all(req.album.id)
   res.json({ album: { ...req.album, has_password: !!req.album.password, password: undefined, token_version: undefined }, photos })
 })
 
@@ -323,7 +327,7 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
   const recentPhotos = db.prepare(`
     SELECT p.id, p.thumb, p.original_name, p.created_at, a.name as album_name
     FROM photos p LEFT JOIN albums a ON p.album_id = a.id
-    ORDER BY p.created_at DESC LIMIT 8
+    ORDER BY ${PHOTO_DATE_ORDER_DESC} LIMIT 8
   `).all()
   const recentAlbums = db.prepare(`
     SELECT a.*, COUNT(p.id) as photo_count
@@ -449,7 +453,7 @@ app.get('/api/admin/photos', requireAdmin, (req, res) => {
     SELECT p.*, a.name as album_name, a.slug as album_slug,
       CASE WHEN a.cover_photo_id = p.id THEN 1 ELSE 0 END as is_cover
     FROM photos p LEFT JOIN albums a ON p.album_id = a.id
-    ORDER BY p.sort_order ASC, p.created_at DESC
+    ORDER BY ${PHOTO_DATE_ORDER_DESC}
   `).all()
   res.json(photos)
 })
