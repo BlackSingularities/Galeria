@@ -361,6 +361,11 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   justify-content: center;
   max-width: 100%; max-height: 100%;
+  aspect-ratio: var(--photo-ratio, 1);
+}
+.lb-stage:not(.zoom-mode) .lb-img-wrap {
+  height: min(100%, calc((100vw - 120px) / var(--photo-ratio, 1)));
+  max-width: 100%;
 }
 .lb-img-wrap.with-watermark::after {
   content: 'Adam Rędzikowski';
@@ -378,6 +383,7 @@ a { color: inherit; text-decoration: none; }
   z-index: 2;
 }
 .lb-img {
+  width: 100%; height: 100%;
   max-width: 100%; max-height: 100%;
   object-fit: contain;
   transition: opacity .18s ease;
@@ -387,6 +393,8 @@ a { color: inherit; text-decoration: none; }
 }
 .lb-stage.zoom-mode .lb-img-wrap {
   max-width: none; max-height: none;
+  height: auto;
+  aspect-ratio: auto;
   pointer-events: auto;
 }
 .lb-stage.zoom-mode .lb-img {

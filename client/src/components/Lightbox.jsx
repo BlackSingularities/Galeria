@@ -242,6 +242,7 @@ export default function Lightbox({
             key={photo.id}
             className={`lb-img-wrap ${protectedPublic ? 'with-watermark' : ''}`}
             style={{
+              '--photo-ratio': photo.width && photo.height ? photo.width / photo.height : 1,
               opacity: fade && loaded ? 1 : 0,
               transition: 'opacity .25s ease',
               ...(zoom ? { width: photo.width, height: photo.height, maxWidth: 'none', maxHeight: 'none' } : {}),
