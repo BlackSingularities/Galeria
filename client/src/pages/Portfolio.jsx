@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getPortfolio, fileUrl } from '../api'
 import Grid from '../components/Grid'
@@ -11,6 +11,13 @@ export default function Portfolio() {
   const [photos, setPhotos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+
+  // Picked once per load (not on every render) so the hero doesn't jump
+  // between photos while the page is open.
+  const heroPhoto = useMemo(
+    () => photos.length ? photos[Math.floor(Math.random() * photos.length)] : null,
+    [photos],
+  )
 
   useEffect(() => {
     setPageMeta({
@@ -37,8 +44,8 @@ export default function Portfolio() {
       {/* Hero */}
       <div className="hero">
         <div
-          className={`hero-bg ${photos[0] ? 'has-image' : ''}`}
-          style={photos[0] ? { backgroundImage: `url(${fileUrl(photos[0].filename)})` } : undefined}
+          className={`hero-bg ${heroPhoto ? 'has-image' : ''}`}
+          style={heroPhoto ? { backgroundImage: `url(${fileUrl(heroPhoto.filename)})` } : undefined}
         />
         <div className="hero-overlay" />
         <div className="hero-content">
@@ -55,7 +62,7 @@ export default function Portfolio() {
           <div>
             <p className="section-label">Portfolio fotograficzne</p>
             <h2 className="section-heading">
-              Wybrane<br /><em>prace</em>
+              Moje ulubione<br /><em>prace</em>
             </h2>
           </div>
           {!loading && photos.length > 0 && (
