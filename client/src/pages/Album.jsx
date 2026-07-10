@@ -67,7 +67,7 @@ export default function Album() {
   if (loading) return (
     <div className="page">
       <Nav />
-      <div className="section-wrap">
+      <div className="gallery-wrap" style={{ paddingTop: 40 }}>
         <SkeletonGrid count={9} />
       </div>
     </div>
@@ -120,7 +120,7 @@ export default function Album() {
       </div>
 
       {/* Grid */}
-      <div style={{ padding:'0 60px 80px' }}>
+      <div className="gallery-wrap">
         <Grid photos={photos} syncUrl mediaToken={mediaToken} />
       </div>
 

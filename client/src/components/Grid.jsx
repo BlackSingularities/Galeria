@@ -23,9 +23,12 @@ function PhotoImg({ photo, mediaToken }) {
   )
 }
 
+const BATCH_SIZE = 24
+
 export default function Grid({
   photos, adminMode = false, selectable = false, selected = [], onSelect, onDelete, syncUrl = false,
   reorderable = false, onReorder, onSetCover, onTogglePortfolio, mediaToken = null,
+  infiniteScroll = !reorderable,
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const dragFrom = useRef(null)
@@ -38,6 +41,34 @@ export default function Grid({
     return i >= 0 ? i : null
   })
   const openedFromUrl = useRef(lightboxIdx !== null)
+
+  // Render photos in growing batches instead of all at once — keeps the
+  // initial paint light and defers offscreen images (native loading="lazy"
+  // only helps once an <img> exists in the DOM at all).
+  const [visibleCount, setVisibleCount] = useState(() => {
+    if (!infiniteScroll) return photos.length
+    const initial = lightboxIdx !== null ? lightboxIdx + 1 : 0
+    return Math.min(Math.max(BATCH_SIZE, initial), photos.length)
+  })
+  const sentinelRef = useRef(null)
+
+  useEffect(() => {
+    setVisibleCount(infiniteScroll ? Math.min(BATCH_SIZE, photos.length) : photos.length)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photos, infiniteScroll])
+
+  useEffect(() => {
+    if (!infiniteScroll || visibleCount >= photos.length) return
+    const el = sentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        setVisibleCount(v => Math.min(v + BATCH_SIZE, photos.length))
+      }
+    }, { rootMargin: '900px' })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [infiniteScroll, visibleCount, photos.length])
 
   useEffect(() => {
     if (!openedFromUrl.current) return
@@ -100,10 +131,12 @@ export default function Grid({
     )
   }
 
+  const visiblePhotos = infiniteScroll ? photos.slice(0, visibleCount) : photos
+
   return (
     <>
       <div className="photo-grid">
-        {photos.map((photo, i) => (
+        {visiblePhotos.map((photo, i) => (
           <div
             key={photo.id}
             data-photo-id={photo.id}
@@ -180,6 +213,10 @@ export default function Grid({
           </div>
         ))}
       </div>
+
+      {infiniteScroll && visibleCount < photos.length && (
+        <div ref={sentinelRef} className="grid-sentinel" />
+      )}
 
       {lightboxIdx !== null && (
         <Lightbox

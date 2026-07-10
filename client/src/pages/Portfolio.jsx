@@ -56,8 +56,8 @@ export default function Portfolio() {
         </div>
       </div>
 
-      {/* Grid */}
-      <div className="section-wrap">
+      {/* Heading */}
+      <div className="section-wrap" style={{ paddingBottom: 0 }}>
         <div className="section-heading-row">
           <div>
             <p className="section-label">Portfolio fotograficzne</p>
@@ -69,7 +69,10 @@ export default function Portfolio() {
             <span className="section-count">{photos.length} {photos.length === 1 ? 'zdjęcie' : photos.length < 5 ? 'zdjęcia' : 'zdjęć'}</span>
           )}
         </div>
+      </div>
 
+      {/* Grid */}
+      <div className="gallery-wrap">
         {loading ? (
           <SkeletonGrid count={12} />
         ) : error ? (
