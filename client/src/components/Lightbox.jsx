@@ -1,45 +1,103 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { fileUrl, thumbUrl } from '../api'
+import { useToast } from './Feedback'
+import {
+  IconClose, IconPrev, IconNext, IconZoomIn, IconZoomOut, IconDownload,
+  IconInfo, IconShare, IconPlay, IconPause, IconFullscreen, IconExitFullscreen,
+  IconCamera, IconAperture, IconClock, IconCalendar, IconLayers,
+} from './icons'
 
-const IconClose    = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-const IconPrev     = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="15 18 9 12 15 6"/></svg>
-const IconNext     = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="9 18 15 12 9 6"/></svg>
-const IconZoomIn   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-const IconDownload = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-const IconZoomOut  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-
-function fmt(bytes) {
+function fmtBytes(bytes) {
   if (!bytes) return ''
   if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1048576) return `${(bytes/1024).toFixed(0)} KB`
-  return `${(bytes/1048576).toFixed(1)} MB`
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / 1048576).toFixed(1)} MB`
 }
 
-export default function Lightbox({ photos, index: initIndex, onClose }) {
-  const [idx, setIdx]   = useState(initIndex ?? 0)
-  const [zoom, setZoom] = useState(false)
-  const [fade, setFade] = useState(true)
+function fmtDate(iso) {
+  if (!iso) return null
+  try {
+    return new Date(iso).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })
+  } catch { return null }
+}
+
+const SLIDESHOW_MS = 4200
+
+export default function Lightbox({ photos, index: initIndex, onClose, onIndexChange, mediaToken = null }) {
+  const [idx, setIdx]     = useState(initIndex ?? 0)
+  const [zoom, setZoom]   = useState(false)
+  const [fade, setFade]   = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [showInfo, setShowInfo] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const thumbRef = useRef(null)
+  const backdropRef = useRef(null)
+  const toast = useToast()
   const total = photos.length
   const photo = photos[idx]
 
+  const megapixels = useMemo(() => {
+    if (!photo?.width || !photo?.height) return null
+    return (photo.width * photo.height / 1_000_000).toFixed(1)
+  }, [photo])
+
   const go = useCallback((next) => {
-    setFade(false)
-    setTimeout(() => { setIdx(next); setZoom(false); setFade(true) }, 160)
-  }, [])
-  const prev = () => go((idx - 1 + total) % total)
-  const next = () => go((idx + 1) % total)
+    setFade(false); setLoaded(false)
+    setTimeout(() => {
+      setIdx(next); setZoom(false); setFade(true)
+      onIndexChange?.(next)
+    }, 150)
+  }, [onIndexChange])
+  const prev = useCallback(() => go((idx - 1 + total) % total), [go, idx, total])
+  const next = useCallback(() => go((idx + 1) % total), [go, idx, total])
+
+  // Preload the neighbouring full-resolution images so navigation feels instant.
+  useEffect(() => {
+    const preload = (i) => { const p = photos[i]; if (p) { const img = new Image(); img.src = fileUrl(p.filename, mediaToken) } }
+    preload((idx + 1) % total)
+    preload((idx - 1 + total) % total)
+  }, [idx, total, photos])
 
   useEffect(() => {
     const handler = (e) => {
+      if (['ArrowLeft', 'ArrowRight', ' ', 'i', 'I', 'f', 'F', 'z', 'Z', 'Home', 'End'].includes(e.key)) e.preventDefault()
       if (e.key === 'ArrowLeft')  prev()
       if (e.key === 'ArrowRight') next()
       if (e.key === 'Escape')     onClose()
       if (e.key === 'z' || e.key === 'Z') setZoom(v => !v)
+      if (e.key === 'i' || e.key === 'I') setShowInfo(v => !v)
+      if (e.key === 'f' || e.key === 'F') toggleFullscreen()
+      if (e.key === ' ' && total > 1) setPlaying(v => !v)
+      if (e.key === 'Home') go(0)
+      if (e.key === 'End') go(total - 1)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [idx, total]) // eslint-disable-line
+  }, [prev, next, onClose, go, total])
+
+  useEffect(() => {
+    backdropRef.current?.focus()
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  useEffect(() => {
+    if (!playing) return
+    const t = setInterval(next, SLIDESHOW_MS)
+    return () => clearInterval(t)
+  }, [playing, idx, next])
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) backdropRef.current?.requestFullscreen?.().catch(() => {})
+    else document.exitFullscreen?.()
+  }
 
   // Scroll active thumb into view
   useEffect(() => {
@@ -53,32 +111,73 @@ export default function Lightbox({ photos, index: initIndex, onClose }) {
   const onTouchEnd   = (e) => {
     if (!touchStart.current) return
     const dx = e.changedTouches[0].clientX - touchStart.current
-    if (Math.abs(dx) > 50) dx < 0 ? next() : prev()
+    if (Math.abs(dx) > 50) { setPlaying(false); dx < 0 ? next() : prev() }
     touchStart.current = null
   }
 
   const handleDownload = () => {
     const a = document.createElement('a')
-    a.href = fileUrl(photo.filename)
+    a.href = fileUrl(photo.filename, mediaToken)
     a.download = photo.original_name || photo.filename
     a.click()
   }
 
-  return (
-    <div className="lb-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+  const handleShare = async () => {
+    const url = new URL(window.location.href)
+    url.searchParams.set('photo', photo.id)
+    const shareUrl = url.toString()
+    if (navigator.share) {
+      try { await navigator.share({ title: photo.original_name || 'Zdjęcie', url: shareUrl }) } catch {}
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      toast.success('Link do zdjęcia skopiowany do schowka')
+    } catch {
+      toast.error('Nie udało się skopiować linku')
+    }
+  }
 
+  const hasExif = photo.camera_make || photo.camera_model || photo.lens || photo.aperture || photo.shutter_speed || photo.iso || photo.focal_length
+  const takenDate = fmtDate(photo.taken_at)
+  const uploadDate = fmtDate(photo.created_at)
+
+  return (
+    <div
+      className="lb-backdrop"
+      ref={backdropRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label={photo.original_name || 'Podgląd zdjęcia'}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
       {/* Top bar */}
       <div className="lb-bar">
         <div className="lb-bar-left">
           <span className="lb-counter">{idx + 1} / {total}</span>
           <span className="lb-filename">{photo.original_name || photo.filename}</span>
-          {photo.width && <span className="lb-filename">{photo.width} × {photo.height} · {fmt(photo.file_size)}</span>}
+          {photo.width && <span className="lb-filename lb-filename-meta">{photo.width} × {photo.height}{megapixels && ` · ${megapixels} MP`} · {fmtBytes(photo.file_size)}</span>}
         </div>
         <div className="lb-bar-right">
+          {total > 1 && (
+            <button className={`lb-btn ${playing ? 'active' : ''}`} onClick={() => setPlaying(v => !v)} title={playing ? 'Zatrzymaj pokaz (Spacja)' : 'Pokaz slajdów (Spacja)'}>
+              {playing ? <IconPause /> : <IconPlay />}
+            </button>
+          )}
+          <button className={`lb-btn ${showInfo ? 'active' : ''}`} onClick={() => setShowInfo(v => !v)} title="Szczegóły (I)">
+            <IconInfo />
+          </button>
+          <button className="lb-btn" onClick={handleShare} title="Udostępnij">
+            <IconShare />
+          </button>
           <button className={`lb-btn ${zoom ? 'active' : ''}`} onClick={() => setZoom(v => !v)} title="Zoom 1:1 (Z)">
             {zoom ? <IconZoomOut /> : <IconZoomIn />}
           </button>
-          <button className="lb-btn" onClick={handleDownload} title="Pobierz">
+          <button className="lb-btn lb-btn-hide-mobile" onClick={toggleFullscreen} title="Pełny ekran (F)">
+            {isFullscreen ? <IconExitFullscreen /> : <IconFullscreen />}
+          </button>
+          <button className="lb-btn" onClick={handleDownload} title="Pobierz oryginał">
             <IconDownload />
           </button>
           <button className="lb-btn" onClick={onClose} title="Zamknij (Esc)">
@@ -88,32 +187,81 @@ export default function Lightbox({ photos, index: initIndex, onClose }) {
       </div>
 
       {/* Main stage */}
-      <div
-        className={`lb-stage ${zoom ? 'zoom-mode' : ''}`}
-        onTouchStart={onTouchStart}
-        onTouchEnd={onTouchEnd}
-        onClick={zoom ? () => setZoom(false) : undefined}
-      >
-        {total > 1 && !zoom && (
-          <>
-            <button className="lb-nav prev" onClick={(e) => { e.stopPropagation(); prev() }} disabled={total <= 1}>
-              <IconPrev />
+      <div className="lb-body">
+        <div
+          className={`lb-stage ${zoom ? 'zoom-mode' : ''}`}
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
+          onClick={zoom ? () => setZoom(false) : undefined}
+        >
+          {total > 1 && !zoom && (
+            <>
+              <button className="lb-nav prev" onClick={(e) => { e.stopPropagation(); setPlaying(false); prev() }} disabled={total <= 1} aria-label="Poprzednie zdjęcie">
+                <IconPrev />
+              </button>
+              <button className="lb-nav next" onClick={(e) => { e.stopPropagation(); setPlaying(false); next() }} disabled={total <= 1} aria-label="Następne zdjęcie">
+                <IconNext />
+              </button>
+            </>
+          )}
+
+          {photo.blur_data_url && (
+            <img src={photo.blur_data_url} alt="" aria-hidden className="lb-img-blur" style={{ opacity: loaded ? 0 : 1 }} draggable={false} />
+          )}
+          {!loaded && <div className="lb-spinner" />}
+
+          <img
+            key={photo.id}
+            src={fileUrl(photo.filename, mediaToken)}
+            alt={photo.original_name || ''}
+            className="lb-img"
+            style={{
+              opacity: fade && loaded ? 1 : 0,
+              transition: 'opacity .25s ease',
+              ...(zoom ? { width: photo.width, height: photo.height, maxWidth: 'none', maxHeight: 'none' } : {}),
+            }}
+            onLoad={() => setLoaded(true)}
+            onClick={!zoom ? (e) => { e.stopPropagation(); setPlaying(false); next() } : undefined}
+            draggable={false}
+          />
+        </div>
+
+        {/* Details panel */}
+        <aside className={`lb-info ${showInfo ? 'open' : ''}`} aria-hidden={!showInfo}>
+          <div className="lb-info-inner">
+            <h3 className="lb-info-title">{photo.original_name || 'Zdjęcie'}</h3>
+            {photo.album_name && <p className="lb-info-album">{photo.album_name}</p>}
+
+            <div className="lb-info-section">
+              <div className="lb-info-row"><IconLayers /><span>{photo.width} × {photo.height}px{megapixels && ` · ${megapixels} MP`}</span></div>
+              <div className="lb-info-row"><IconDownload /><span>{fmtBytes(photo.file_size)}{photo.original_quality ? ' · oryginał 1:1' : ''}</span></div>
+              {uploadDate && <div className="lb-info-row"><IconCalendar /><span>Dodano {uploadDate}</span></div>}
+            </div>
+
+            {hasExif && (
+              <div className="lb-info-section">
+                <p className="lb-info-heading">Aparat</p>
+                {(photo.camera_make || photo.camera_model) && (
+                  <div className="lb-info-row"><IconCamera /><span>{[photo.camera_make, photo.camera_model].filter(Boolean).join(' ')}</span></div>
+                )}
+                {photo.lens && <div className="lb-info-row"><IconAperture /><span>{photo.lens}</span></div>}
+                {(photo.aperture || photo.shutter_speed || photo.iso || photo.focal_length) && (
+                  <div className="lb-info-row lb-info-tags">
+                    {photo.focal_length && <span className="tag">{photo.focal_length}</span>}
+                    {photo.aperture && <span className="tag">{photo.aperture}</span>}
+                    {photo.shutter_speed && <span className="tag">{photo.shutter_speed}</span>}
+                    {photo.iso && <span className="tag">ISO {photo.iso}</span>}
+                  </div>
+                )}
+                {takenDate && <div className="lb-info-row"><IconClock /><span>Wykonano {takenDate}</span></div>}
+              </div>
+            )}
+
+            <button className="btn btn-ghost" style={{ width: '100%', marginTop: 8 }} onClick={handleDownload}>
+              <IconDownload /> Pobierz oryginał
             </button>
-            <button className="lb-nav next" onClick={(e) => { e.stopPropagation(); next() }} disabled={total <= 1}>
-              <IconNext />
-            </button>
-          </>
-        )}
-        <img
-          key={photo.filename}
-          src={zoom ? fileUrl(photo.filename) : (thumbUrl(photo.thumb) || fileUrl(photo.filename))}
-          alt={photo.original_name || ''}
-          className="lb-img"
-          style={{ opacity: fade ? 1 : 0, transition: 'opacity .16s ease',
-            ...(zoom ? { width: photo.width, height: photo.height, maxWidth: 'none', maxHeight: 'none' } : {}) }}
-          onClick={!zoom ? (e) => { e.stopPropagation(); next() } : undefined}
-          draggable={false}
-        />
+          </div>
+        </aside>
       </div>
 
       {/* Thumbnails */}
@@ -122,10 +270,10 @@ export default function Lightbox({ photos, index: initIndex, onClose }) {
           {photos.map((p, i) => (
             <img
               key={p.id}
-              src={thumbUrl(p.thumb) || fileUrl(p.filename)}
+              src={thumbUrl(p.thumb, mediaToken) || fileUrl(p.filename, mediaToken)}
               alt=""
               className={`lb-thumb ${i === idx ? 'active' : ''}`}
-              onClick={() => go(i)}
+              onClick={() => { setPlaying(false); go(i) }}
               draggable={false}
             />
           ))}

@@ -1,16 +1,25 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getPortfolio } from '../api'
+import { getPortfolio, fileUrl } from '../api'
 import Grid from '../components/Grid'
+import SkeletonGrid from '../components/SkeletonGrid'
+import BackToTop from '../components/BackToTop'
+import { setPageMeta } from '../lib/seo'
+import { IconImage } from '../components/icons'
 
 export default function Portfolio() {
   const [photos, setPhotos] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
 
   useEffect(() => {
+    setPageMeta({
+      title: 'Adam Rędzikowski — Galeria fotograficzna',
+      description: 'Portfolio fotograficzne Adam Rędzikowski — wybrane prace, śluby, portrety i plenery.',
+    })
     getPortfolio()
       .then(setPhotos)
-      .catch(console.error)
+      .catch(() => setError(true))
       .finally(() => setLoading(false))
   }, [])
 
@@ -27,7 +36,10 @@ export default function Portfolio() {
 
       {/* Hero */}
       <div className="hero">
-        <div className="hero-bg" />
+        <div
+          className={`hero-bg ${photos[0] ? 'has-image' : ''}`}
+          style={photos[0] ? { backgroundImage: `url(${fileUrl(photos[0].filename)})` } : undefined}
+        />
         <div className="hero-overlay" />
         <div className="hero-content">
           <p className="hero-label">Fotografia</p>
@@ -39,31 +51,41 @@ export default function Portfolio() {
 
       {/* Grid */}
       <div className="section-wrap">
-        <p className="section-label">Portfolio fotograficzne</p>
-        <h2 className="section-heading" style={{ marginBottom: 32 }}>
-          Wybrane<br /><em>prace</em>
-        </h2>
+        <div className="section-heading-row">
+          <div>
+            <p className="section-label">Portfolio fotograficzne</p>
+            <h2 className="section-heading">
+              Wybrane<br /><em>prace</em>
+            </h2>
+          </div>
+          {!loading && photos.length > 0 && (
+            <span className="section-count">{photos.length} {photos.length === 1 ? 'zdjęcie' : photos.length < 5 ? 'zdjęcia' : 'zdjęć'}</span>
+          )}
+        </div>
 
         {loading ? (
-          <div className="spinner" />
-        ) : (
-          <Grid photos={photos} />
-        )}
-
-        {!loading && photos.length === 0 && (
+          <SkeletonGrid count={12} />
+        ) : error ? (
           <div className="empty-state">
-            <div style={{ fontSize: '3rem', opacity: .3 }}>📷</div>
+            <IconImage width={40} height={40} style={{ opacity: .3, margin: '0 auto' }} />
+            <p>Nie udało się wczytać galerii. Spróbuj odświeżyć stronę.</p>
+          </div>
+        ) : photos.length === 0 ? (
+          <div className="empty-state">
+            <IconImage width={40} height={40} style={{ opacity: .3, margin: '0 auto' }} />
             <p style={{ marginTop: 12 }}>
               Portfolio jeszcze w budowie.<br />
               <Link to="/admin" style={{ color:'var(--gold)' }}>Dodaj pierwsze zdjęcia →</Link>
             </p>
           </div>
+        ) : (
+          <Grid photos={photos} syncUrl />
         )}
       </div>
 
       {/* Footer */}
-      <footer style={{ borderTop:'1px solid var(--border-2)', padding:'32px 60px', marginTop:60 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+      <footer className="site-footer">
+        <div className="site-footer-inner">
           <span style={{ color:'var(--text-3)', fontSize:13 }}>
             © {new Date().getFullYear()} Adam Rędzikowski
           </span>
@@ -72,6 +94,8 @@ export default function Portfolio() {
           </a>
         </div>
       </footer>
+
+      <BackToTop />
     </div>
   )
 }

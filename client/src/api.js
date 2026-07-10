@@ -1,8 +1,11 @@
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, '') // e.g. '/galeria' or ''
 
 export const API   = `${BASE}/api`
-export const fileUrl  = (f) => f ? `${BASE}/uploads/${f}` : ''
-export const thumbUrl = (f) => f ? `${BASE}/thumbs/${f}`  : ''
+// `token` is only required for photos in password-protected albums — public
+// portfolio photos and public albums ignore it. Passing it unconditionally is
+// harmless, so callers with a token in scope can just always pass it through.
+export const fileUrl  = (f, token) => f ? `${BASE}/uploads/${f}${token ? `?t=${encodeURIComponent(token)}` : ''}` : ''
+export const thumbUrl = (f, token) => f ? `${BASE}/thumbs/${f}${token ? `?t=${encodeURIComponent(token)}` : ''}`  : ''
 
 const getToken = () => localStorage.getItem('admin_token')
 
@@ -17,7 +20,7 @@ async function req(method, path, body, token) {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw Object.assign(new Error(err.error || 'Error'), { status: res.status })
+    throw Object.assign(new Error(err.error || 'Error'), { ...err, status: res.status })
   }
   return res.json()
 }
@@ -29,20 +32,24 @@ export const getAlbum      = (slug, token)    => req('GET',  `/albums/${slug}`, 
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 export const adminLogin       = (password) => req('POST', '/admin/login', { password })
+export const adminGetStats    = () => req('GET',  '/admin/stats')
 export const adminGetAlbums   = () => req('GET',  '/admin/albums')
 export const adminCreateAlbum = (data) => req('POST', '/admin/albums', data)
 export const adminUpdateAlbum = (id, data) => req('PUT', `/admin/albums/${id}`, data)
+export const adminSetAlbumCover = (id, photoId) => req('PUT', `/admin/albums/${id}/cover`, { photoId })
 export const adminDeleteAlbum = (id) => req('DELETE', `/admin/albums/${id}`)
 export const adminGetPhotos   = () => req('GET',  '/admin/photos')
 export const adminUpdatePhoto = (id, data) => req('PUT', `/admin/photos/${id}`, data)
+export const adminReorderPhotos = (ids) => req('PUT', '/admin/photos/reorder', { ids })
 export const adminDeletePhoto = (id) => req('DELETE', `/admin/photos/${id}`)
 
 const UPLOAD_BATCH_SIZE = 1
 
-function uploadBatch(albumId, files, onProgress) {
+function uploadBatch(albumId, files, quality, onProgress) {
   const token = getToken()
   const fd = new FormData()
   for (const f of files) fd.append('photos', f)
+  fd.append('quality', quality)
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -63,7 +70,7 @@ function uploadBatch(albumId, files, onProgress) {
   })
 }
 
-export async function adminUpload(albumId, files, onProgress) {
+export async function adminUpload(albumId, files, onProgress, onFileStart, quality = 'optimized') {
   const list = Array.from(files)
   const totalBytes = list.reduce((sum, file) => sum + file.size, 0)
   let uploadedBeforeBatch = 0
@@ -72,8 +79,9 @@ export async function adminUpload(albumId, files, onProgress) {
 
   for (let i = 0; i < list.length; i += UPLOAD_BATCH_SIZE) {
     const batch = list.slice(i, i + UPLOAD_BATCH_SIZE)
+    onFileStart?.(batch[0], i, list.length)
     const batchBytes = batch.reduce((sum, file) => sum + file.size, 0)
-    const res = await uploadBatch(albumId, batch, (batchProgress) => {
+    const res = await uploadBatch(albumId, batch, quality, (batchProgress) => {
       if (onProgress && totalBytes > 0) {
         onProgress((uploadedBeforeBatch + batchBytes * batchProgress) / totalBytes)
       }

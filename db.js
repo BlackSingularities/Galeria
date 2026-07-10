@@ -7,6 +7,35 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
 
 let db
 
+// Columns added after the initial release. Each is applied via ALTER TABLE
+// and ignored if it already exists, so this file stays the single source of
+// truth for the schema without needing a separate migration runner.
+const PHOTO_COLUMNS = [
+  ['taken_at',      'TEXT'],
+  ['camera_make',   'TEXT'],
+  ['camera_model',  'TEXT'],
+  ['lens',          'TEXT'],
+  ['focal_length',  'TEXT'],
+  ['aperture',      'TEXT'],
+  ['shutter_speed', 'TEXT'],
+  ['iso',           'TEXT'],
+  ['blur_data_url', 'TEXT'],
+  ['original_quality', 'INTEGER DEFAULT 0'],
+]
+
+const ALBUM_COLUMNS = [
+  ['cover_photo_id', 'INTEGER REFERENCES photos(id) ON DELETE SET NULL'],
+  ['updated_at',      "TEXT DEFAULT (datetime('now'))"],
+  ['token_version',   'INTEGER DEFAULT 0'],
+]
+
+function addColumnIfMissing(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name)
+  if (!cols.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
+}
+
 function initDb() {
   db = new Database(DB_PATH)
   db.pragma('journal_mode = WAL')
@@ -35,7 +64,13 @@ function initDb() {
       is_portfolio INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE INDEX IF NOT EXISTS idx_photos_album ON photos(album_id);
+    CREATE INDEX IF NOT EXISTS idx_photos_portfolio ON photos(is_portfolio);
   `)
+
+  for (const [col, def] of PHOTO_COLUMNS) addColumnIfMissing('photos', col, def)
+  for (const [col, def] of ALBUM_COLUMNS) addColumnIfMissing('albums', col, def)
 }
 
 function getDb() {

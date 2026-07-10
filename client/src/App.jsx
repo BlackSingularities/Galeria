@@ -1,7 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Portfolio from './pages/Portfolio'
 import Album from './pages/Album'
 import Admin from './pages/Admin'
+import NotFound from './pages/NotFound'
 
 const BASE = import.meta.env.BASE_URL
 
@@ -12,7 +13,7 @@ export default function App() {
         <Route path="/"             element={<Portfolio />} />
         <Route path="/album/:slug"  element={<Album />} />
         <Route path="/admin"        element={<Admin />} />
-        <Route path="*"             element={<Navigate to="/" replace />} />
+        <Route path="*"             element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   )

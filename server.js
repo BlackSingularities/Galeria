@@ -5,10 +5,15 @@ const crypto = require('crypto')
 const multer = require('multer')
 const sharp = require('sharp')
 const jwt = require('jsonwebtoken')
+const exifr = require('exifr')
+const helmet = require('helmet')
+const compression = require('compression')
+const rateLimit = require('express-rate-limit')
 const { initDb, getDb } = require('./db')
 
 const app = express()
 const PORT = process.env.PORT || 3002
+const NODE_ENV = process.env.NODE_ENV || 'development'
 const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'admin123'
 const JWT_SECRET = process.env.JWT_SECRET || 'galeria-secret-change-me-in-production'
 
@@ -18,12 +23,78 @@ const THUMBS_DIR  = process.env.THUMBS_DIR  || path.join(__dirname, 'persist/thu
 fs.mkdirSync(UPLOADS_DIR, { recursive: true })
 fs.mkdirSync(THUMBS_DIR,  { recursive: true })
 
+if (NODE_ENV === 'production' && (ADMIN_PASS === 'admin123' || JWT_SECRET === 'galeria-secret-change-me-in-production')) {
+  console.warn('\n' + '⚠ '.repeat(20))
+  console.warn('UWAGA: ADMIN_PASSWORD i/lub JWT_SECRET nie zostały ustawione — używane są wartości domyślne.')
+  console.warn('Ustaw zmienne środowiskowe ADMIN_PASSWORD i JWT_SECRET przed wdrożeniem produkcyjnym!')
+  console.warn('⚠ '.repeat(20) + '\n')
+}
+
 initDb()
-app.use(express.json())
+
+// ── Global middleware ──────────────────────────────────────────────────────────
+
+app.set('trust proxy', 1)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+    },
+  },
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}))
+app.use(compression())
+app.use(express.json({ limit: '2mb' }))
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Zbyt wiele prób logowania. Spróbuj ponownie za kilkanaście minut.' },
+})
+
+// ── Media access gate ────────────────────────────────────────────────────────
+// Listing endpoints already require a password/token, but the raw file URLs
+// used to be served unconditionally by express.static — anyone who learned a
+// filename could fetch it forever. This middleware re-checks access on every
+// single file request: portfolio photos (and photos in password-less albums)
+// stay public and cacheable; photos that belong to a password-protected album
+// require a valid token that matches the album's *current* token_version, so
+// changing the album password immediately revokes every previously issued link.
+function protectMedia(req, res, next) {
+  const db = getDb()
+  const filename = path.basename(req.path)
+  const isThumb = filename.startsWith('t_')
+  const column = isThumb ? 'thumb' : 'filename'
+  const photo = db.prepare(`SELECT p.is_portfolio, a.id as album_id, a.password as album_password, a.token_version as token_version
+    FROM photos p LEFT JOIN albums a ON a.id = p.album_id WHERE p.${column} = ?`).get(filename)
+
+  if (!photo) return res.status(404).end()
+  if (photo.is_portfolio || !photo.album_id || !photo.album_password) return next()
+
+  const token = req.query.t || req.headers.authorization?.replace('Bearer ', '')
+  try {
+    const p = jwt.verify(token, JWT_SECRET)
+    if (p.admin) return next()
+    if (p.albumId === photo.album_id && (p.tokenVersion || 0) === (photo.token_version || 0)) return next()
+    throw new Error()
+  } catch {
+    return res.status(403).json({ error: 'Brak dostępu' })
+  }
+}
 
 // Static files (served directly — nginx proxy strips /galeria prefix)
-app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1y' }))
-app.use('/thumbs',  express.static(THUMBS_DIR,  { maxAge: '1y' }))
+app.use('/uploads', protectMedia, express.static(UPLOADS_DIR, { maxAge: '1y', immutable: true }))
+app.use('/thumbs',  protectMedia, express.static(THUMBS_DIR,  { maxAge: '1y', immutable: true }))
 
 // Multer
 const storage = multer.diskStorage({
@@ -41,37 +112,111 @@ const upload = multer({
   },
 })
 
-// ── Auth helpers ──────────────────────────────────────────────────────────────
+// ── Photo processing ─────────────────────────────────────────────────────────
 
 const MAIN_IMAGE_MAX_SIZE = 3000
 const MAIN_IMAGE_QUALITY = 90
 const THUMB_MAX_SIZE = 800
 const THUMB_QUALITY = 82
+const LQIP_SIZE = 24
+const LQIP_QUALITY = 40
 const MAX_UPLOAD_FILES = 1000
 
-async function processUploadedPhoto(file) {
+function fmtAperture(f) {
+  if (!f) return null
+  return `f/${Number(f).toFixed(Number(f) % 1 === 0 ? 0 : 1)}`
+}
+function fmtShutter(t) {
+  if (!t) return null
+  if (t >= 1) return `${t}s`
+  const denom = Math.round(1 / t)
+  return `1/${denom}s`
+}
+function fmtFocal(f) {
+  if (!f) return null
+  return `${Math.round(f)}mm`
+}
+
+// GPS is intentionally never parsed/stored — client photos can contain shoot
+// locations that shouldn't leak through gallery metadata.
+async function extractExif(filePath) {
+  try {
+    const data = await exifr.parse(filePath, {
+      gps: false,
+      pick: ['Make', 'Model', 'LensModel', 'FNumber', 'ExposureTime', 'ISO', 'FocalLength', 'DateTimeOriginal', 'CreateDate'],
+    })
+    if (!data) return {}
+    const make = data.Make?.trim()
+    const model = data.Model?.trim()
+    const takenAt = data.DateTimeOriginal || data.CreateDate
+    return {
+      camera_make: make || null,
+      camera_model: model && make && model.startsWith(make) ? model.slice(make.length).trim() || model : model || null,
+      lens: data.LensModel?.trim() || null,
+      aperture: fmtAperture(data.FNumber),
+      shutter_speed: fmtShutter(data.ExposureTime),
+      iso: data.ISO ? String(data.ISO) : null,
+      focal_length: fmtFocal(data.FocalLength),
+      taken_at: takenAt instanceof Date && !isNaN(takenAt) ? takenAt.toISOString() : null,
+    }
+  } catch {
+    return {}
+  }
+}
+
+// EXIF orientation 5-8 means the raw pixel grid is rotated 90°/270° relative
+// to how it's displayed — swap width/height so stored dimensions match what
+// browsers actually render (they auto-rotate JPEGs per the orientation tag).
+function displayDims(meta) {
+  const rotated = meta.orientation >= 5 && meta.orientation <= 8
+  return rotated ? { width: meta.height, height: meta.width } : { width: meta.width, height: meta.height }
+}
+
+async function processUploadedPhoto(file, keepOriginal) {
+  const exif = await extractExif(file.path)
+
   const baseName = path.basename(file.filename, path.extname(file.filename))
-  const filename = `${baseName}.jpg`
-  const thumb = `t_${filename}`
+  const srcExt = path.extname(file.filename).toLowerCase()
+  const filename = keepOriginal ? `${baseName}${srcExt}` : `${baseName}.jpg`
+  const thumb = `t_${filename.replace(/\.[^.]+$/, '')}.jpg`
   const outputPath = path.join(UPLOADS_DIR, filename)
-  const tempPath = path.join(UPLOADS_DIR, `${baseName}.processed.jpg`)
 
-  const info = await sharp(file.path)
-    .rotate()
-    .resize(MAIN_IMAGE_MAX_SIZE, MAIN_IMAGE_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: MAIN_IMAGE_QUALITY, progressive: true })
-    .toFile(tempPath)
+  let width, height, fileSize
 
-  try { fs.unlinkSync(file.path) } catch {}
-  fs.renameSync(tempPath, outputPath)
+  if (keepOriginal) {
+    fs.renameSync(file.path, outputPath)
+    const meta = await sharp(outputPath).metadata()
+    ;({ width, height } = displayDims(meta))
+    fileSize = fs.statSync(outputPath).size
+  } else {
+    const tempPath = path.join(UPLOADS_DIR, `${baseName}.processed.jpg`)
+    const info = await sharp(file.path)
+      .rotate()
+      .resize(MAIN_IMAGE_MAX_SIZE, MAIN_IMAGE_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: MAIN_IMAGE_QUALITY, progressive: true })
+      .toFile(tempPath)
+    try { fs.unlinkSync(file.path) } catch {}
+    fs.renameSync(tempPath, outputPath)
+    width = info.width; height = info.height; fileSize = info.size
+  }
 
   await sharp(outputPath)
+    .rotate()
     .resize(THUMB_MAX_SIZE, THUMB_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: THUMB_QUALITY, progressive: true })
     .toFile(path.join(THUMBS_DIR, thumb))
 
-  return { filename, thumb, width: info.width, height: info.height, fileSize: info.size }
+  const lqipBuffer = await sharp(outputPath)
+    .rotate()
+    .resize(LQIP_SIZE, LQIP_SIZE, { fit: 'inside' })
+    .jpeg({ quality: LQIP_QUALITY })
+    .toBuffer()
+  const blurDataUrl = `data:image/jpeg;base64,${lqipBuffer.toString('base64')}`
+
+  return { filename, thumb, width, height, fileSize, blurDataUrl, exif, originalQuality: !!keepOriginal }
 }
+
+// ── Auth helpers ──────────────────────────────────────────────────────────────
 
 function requireAdmin(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '')
@@ -82,6 +227,10 @@ function requireAdmin(req, res, next) {
   } catch {
     res.status(401).json({ error: 'Unauthorized' })
   }
+}
+
+function issueAlbumToken(album) {
+  return jwt.sign({ albumId: album.id, tokenVersion: album.token_version || 0 }, JWT_SECRET, { expiresIn: '30d' })
 }
 
 function requireAlbumAccess(req, res, next) {
@@ -95,12 +244,17 @@ function requireAlbumAccess(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '')
   try {
     const p = jwt.verify(token, JWT_SECRET)
-    if (p.admin || p.albumId === album.id) return next()
+    if (p.admin) return next()
+    if (p.albumId === album.id && (p.tokenVersion || 0) === (album.token_version || 0)) return next()
     throw new Error()
   } catch {
-    return res.status(401).json({ error: 'Password required', albumId: album.id })
+    return res.status(401).json({ error: 'Password required', albumId: album.id, albumName: album.name })
   }
 }
+
+// ── Health ────────────────────────────────────────────────────────────────────
+
+app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -115,14 +269,13 @@ app.get('/api/portfolio', (req, res) => {
   res.json(photos)
 })
 
-app.post('/api/albums/:slug/verify', (req, res) => {
+app.post('/api/albums/:slug/verify', authLimiter, (req, res) => {
   const db = getDb()
   const album = db.prepare('SELECT * FROM albums WHERE slug = ?').get(req.params.slug)
   if (!album) return res.status(404).json({ error: 'Album not found' })
   if (!album.password) return res.json({ ok: true, token: null })
   if (album.password !== req.body.password) return res.status(401).json({ error: 'Złe hasło' })
-  const token = jwt.sign({ albumId: album.id }, JWT_SECRET, { expiresIn: '30d' })
-  res.json({ ok: true, token })
+  res.json({ ok: true, token: issueAlbumToken(album) })
 })
 
 app.get('/api/albums/:slug', requireAlbumAccess, (req, res) => {
@@ -130,22 +283,44 @@ app.get('/api/albums/:slug', requireAlbumAccess, (req, res) => {
   const photos = db.prepare(
     'SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order ASC, created_at ASC'
   ).all(req.album.id)
-  res.json({ album: { ...req.album, password: undefined }, photos })
+  res.json({ album: { ...req.album, password: undefined, token_version: undefined }, photos })
 })
 
 // ── Admin API ─────────────────────────────────────────────────────────────────
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', authLimiter, (req, res) => {
   if (req.body.password !== ADMIN_PASS) return res.status(401).json({ error: 'Złe hasło' })
   const token = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '7d' })
   res.json({ token })
 })
 
+app.get('/api/admin/stats', requireAdmin, (req, res) => {
+  const db = getDb()
+  const photoCount = db.prepare('SELECT COUNT(*) n FROM photos').get().n
+  const portfolioCount = db.prepare('SELECT COUNT(*) n FROM photos WHERE is_portfolio = 1').get().n
+  const albumCount = db.prepare('SELECT COUNT(*) n FROM albums').get().n
+  const privateAlbumCount = db.prepare("SELECT COUNT(*) n FROM albums WHERE password IS NOT NULL AND password != ''").get().n
+  const storageBytes = db.prepare('SELECT COALESCE(SUM(file_size),0) n FROM photos').get().n
+  const recentPhotos = db.prepare(`
+    SELECT p.id, p.thumb, p.original_name, p.created_at, a.name as album_name
+    FROM photos p LEFT JOIN albums a ON p.album_id = a.id
+    ORDER BY p.created_at DESC LIMIT 8
+  `).all()
+  const recentAlbums = db.prepare(`
+    SELECT a.*, COUNT(p.id) as photo_count
+    FROM albums a LEFT JOIN photos p ON p.album_id = a.id
+    GROUP BY a.id ORDER BY a.created_at DESC LIMIT 5
+  `).all()
+  res.json({ photoCount, portfolioCount, albumCount, privateAlbumCount, storageBytes, recentPhotos, recentAlbums })
+})
+
 app.get('/api/admin/albums', requireAdmin, (req, res) => {
   const db = getDb()
   const albums = db.prepare(`
-    SELECT a.*, COUNT(p.id) as photo_count
-    FROM albums a LEFT JOIN photos p ON p.album_id = a.id
+    SELECT a.*, COUNT(p.id) as photo_count, cp.thumb as cover_thumb
+    FROM albums a
+    LEFT JOIN photos p ON p.album_id = a.id
+    LEFT JOIN photos cp ON cp.id = a.cover_photo_id
     GROUP BY a.id ORDER BY a.created_at DESC
   `).all()
   res.json(albums)
@@ -168,8 +343,27 @@ app.post('/api/admin/albums', requireAdmin, (req, res) => {
 app.put('/api/admin/albums/:id', requireAdmin, (req, res) => {
   const db = getDb()
   const { name, description, password } = req.body
-  db.prepare('UPDATE albums SET name=?,description=?,password=? WHERE id=?')
-    .run(name, description || '', password || null, req.params.id)
+  const existing = db.prepare('SELECT password, token_version FROM albums WHERE id=?').get(req.params.id)
+  if (!existing) return res.status(404).json({ error: 'Album not found' })
+  const newPassword = password || null
+  // Any password change (set, cleared, or changed) revokes every link and
+  // token issued under the old password.
+  const bumpVersion = newPassword !== existing.password
+  db.prepare(`UPDATE albums SET name=?,description=?,password=?,updated_at=datetime('now')
+    ${bumpVersion ? ',token_version=token_version+1' : ''} WHERE id=?`)
+    .run(name, description || '', newPassword, req.params.id)
+  res.json({ ok: true, revoked: bumpVersion })
+})
+
+app.put('/api/admin/albums/:id/cover', requireAdmin, (req, res) => {
+  const db = getDb()
+  const { photoId } = req.body
+  if (photoId) {
+    const photo = db.prepare('SELECT id FROM photos WHERE id=? AND album_id=?').get(photoId, req.params.id)
+    if (!photo) return res.status(400).json({ error: 'Zdjęcie nie należy do tego albumu' })
+  }
+  db.prepare("UPDATE albums SET cover_photo_id=?,updated_at=datetime('now') WHERE id=?")
+    .run(photoId || null, req.params.id)
   res.json({ ok: true })
 })
 
@@ -188,31 +382,42 @@ app.delete('/api/admin/albums/:id', requireAdmin, (req, res) => {
 app.post('/api/admin/albums/:id/upload', requireAdmin, upload.array('photos', MAX_UPLOAD_FILES), async (req, res) => {
   const db = getDb()
   const albumId = parseInt(req.params.id)
+  const keepOriginal = req.body.quality === 'original'
   const results = []
+  const insert = db.prepare(`
+    INSERT INTO photos (album_id,filename,thumb,original_name,width,height,file_size,blur_data_url,original_quality,
+      taken_at,camera_make,camera_model,lens,focal_length,aperture,shutter_speed,iso)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `)
 
   for (const file of req.files || []) {
     try {
-      const processed = await processUploadedPhoto(file)
-      const r = db.prepare(
-        'INSERT INTO photos (album_id,filename,thumb,original_name,width,height,file_size) VALUES (?,?,?,?,?,?,?)'
-      ).run(albumId, processed.filename, processed.thumb, file.originalname, processed.width, processed.height, processed.fileSize)
+      const p = await processUploadedPhoto(file, keepOriginal)
+      const r = insert.run(albumId, p.filename, p.thumb, file.originalname, p.width, p.height, p.fileSize, p.blurDataUrl, p.originalQuality ? 1 : 0,
+        p.exif.taken_at, p.exif.camera_make, p.exif.camera_model, p.exif.lens, p.exif.focal_length, p.exif.aperture, p.exif.shutter_speed, p.exif.iso)
       results.push({ id: r.lastInsertRowid })
     } catch (e) { console.error('upload err:', e.message) }
   }
+  db.prepare("UPDATE albums SET updated_at=datetime('now') WHERE id=?").run(albumId)
   res.json({ uploaded: results.length, results })
 })
 
 // Upload to portfolio (no album)
 app.post('/api/admin/portfolio/upload', requireAdmin, upload.array('photos', MAX_UPLOAD_FILES), async (req, res) => {
   const db = getDb()
+  const keepOriginal = req.body.quality === 'original'
   const results = []
+  const insert = db.prepare(`
+    INSERT INTO photos (album_id,filename,thumb,original_name,width,height,file_size,is_portfolio,blur_data_url,original_quality,
+      taken_at,camera_make,camera_model,lens,focal_length,aperture,shutter_speed,iso)
+    VALUES (NULL,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?)
+  `)
 
   for (const file of req.files || []) {
     try {
-      const processed = await processUploadedPhoto(file)
-      const r = db.prepare(
-        'INSERT INTO photos (album_id,filename,thumb,original_name,width,height,file_size,is_portfolio) VALUES (NULL,?,?,?,?,?,?,1)'
-      ).run(processed.filename, processed.thumb, file.originalname, processed.width, processed.height, processed.fileSize)
+      const p = await processUploadedPhoto(file, keepOriginal)
+      const r = insert.run(p.filename, p.thumb, file.originalname, p.width, p.height, p.fileSize, p.blurDataUrl, p.originalQuality ? 1 : 0,
+        p.exif.taken_at, p.exif.camera_make, p.exif.camera_model, p.exif.lens, p.exif.focal_length, p.exif.aperture, p.exif.shutter_speed, p.exif.iso)
       results.push({ id: r.lastInsertRowid })
     } catch (e) { console.error('upload err:', e.message) }
   }
@@ -222,11 +427,24 @@ app.post('/api/admin/portfolio/upload', requireAdmin, upload.array('photos', MAX
 app.get('/api/admin/photos', requireAdmin, (req, res) => {
   const db = getDb()
   const photos = db.prepare(`
-    SELECT p.*, a.name as album_name, a.slug as album_slug
+    SELECT p.*, a.name as album_name, a.slug as album_slug,
+      CASE WHEN a.cover_photo_id = p.id THEN 1 ELSE 0 END as is_cover
     FROM photos p LEFT JOIN albums a ON p.album_id = a.id
-    ORDER BY p.created_at DESC
+    ORDER BY p.sort_order ASC, p.created_at DESC
   `).all()
   res.json(photos)
+})
+
+app.put('/api/admin/photos/reorder', requireAdmin, (req, res) => {
+  const db = getDb()
+  const { ids } = req.body
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids wymagane' })
+  const update = db.prepare('UPDATE photos SET sort_order=? WHERE id=?')
+  const tx = db.transaction((list) => {
+    list.forEach((id, i) => update.run(i, id))
+  })
+  tx(ids)
+  res.json({ ok: true })
 })
 
 app.put('/api/admin/photos/:id', requireAdmin, (req, res) => {
@@ -244,6 +462,7 @@ app.delete('/api/admin/photos/:id', requireAdmin, (req, res) => {
   try { fs.unlinkSync(path.join(UPLOADS_DIR, photo.filename)) } catch {}
   try { fs.unlinkSync(path.join(THUMBS_DIR,  photo.thumb))    } catch {}
   db.prepare('DELETE FROM photos WHERE id=?').run(photo.id)
+  db.prepare('UPDATE albums SET cover_photo_id=NULL WHERE cover_photo_id=?').run(photo.id)
   res.json({ ok: true })
 })
 
@@ -254,4 +473,15 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'))
 })
 
-app.listen(PORT, () => console.log(`Galeria :${PORT}`))
+// ── Error handling ────────────────────────────────────────────────────────────
+
+app.use((err, req, res, _next) => {
+  if (err instanceof multer.MulterError) {
+    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Plik jest większy niż limit uploadu serwera.' : err.message
+    return res.status(400).json({ error: msg })
+  }
+  console.error(err)
+  res.status(500).json({ error: 'Wewnętrzny błąd serwera' })
+})
+
+app.listen(PORT, () => console.log(`Galeria :${PORT} [${NODE_ENV}]`))

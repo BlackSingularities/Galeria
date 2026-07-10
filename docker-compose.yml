@@ -7,6 +7,7 @@ services:
         VITE_BASE_PATH: /galeria
     restart: unless-stopped
     environment:
+      NODE_ENV: production
       PORT: 3002
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
