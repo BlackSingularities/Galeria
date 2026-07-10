@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getPortfolio, fileUrl } from '../api'
+import { getPortfolio, thumbUrl } from '../api'
 import Grid from '../components/Grid'
 import SkeletonGrid from '../components/SkeletonGrid'
 import BackToTop from '../components/BackToTop'
@@ -45,7 +45,7 @@ export default function Portfolio() {
       <div className="hero">
         <div
           className={`hero-bg ${heroPhoto ? 'has-image' : ''}`}
-          style={heroPhoto ? { backgroundImage: `url(${fileUrl(heroPhoto.filename)})` } : undefined}
+          style={heroPhoto ? { backgroundImage: `url(${thumbUrl(heroPhoto.thumb)})` } : undefined}
         />
         <div className="hero-overlay" />
         <div className="hero-content">
@@ -61,8 +61,8 @@ export default function Portfolio() {
         <div className="section-heading-row">
           <div>
             <p className="section-label">Portfolio fotograficzne</p>
-            <h2 className="section-heading">
-              Moje ulubione<br /><em>prace</em>
+            <h2 className="section-heading section-heading-single">
+              Moje ulubione <em>prace</em>
             </h2>
           </div>
           {!loading && photos.length > 0 && (
@@ -89,7 +89,7 @@ export default function Portfolio() {
             </p>
           </div>
         ) : (
-          <Grid photos={photos} syncUrl />
+          <Grid photos={photos} syncUrl protectedPublic tileSizeStorageKey="portfolio_tile_size" />
         )}
       </div>
 

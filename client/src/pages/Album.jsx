@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getAlbum } from '../api'
 import Grid from '../components/Grid'
 import SkeletonGrid from '../components/SkeletonGrid'
@@ -23,6 +23,7 @@ function Nav() {
 
 export default function Album() {
   const { slug } = useParams()
+  const [searchParams] = useSearchParams()
   const [data, setData]     = useState(null)
   const [mediaToken, setMediaToken] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -54,8 +55,9 @@ export default function Album() {
   }
 
   useEffect(() => {
+    const urlToken = searchParams.get('t')
     const saved = sessionStorage.getItem(TOKEN_KEY(slug))
-    load(saved || localStorage.getItem('admin_token'))
+    load(urlToken || saved || localStorage.getItem('admin_token'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug])
 
@@ -121,7 +123,14 @@ export default function Album() {
 
       {/* Grid */}
       <div className="gallery-wrap">
-        <Grid photos={photos} syncUrl mediaToken={mediaToken} />
+        <Grid
+          photos={photos}
+          syncUrl
+          mediaToken={mediaToken}
+          allowShareDownload
+          albumSlug={slug}
+          tileSizeStorageKey={`album_tile_size_${slug}`}
+        />
       </div>
 
       <BackToTop />

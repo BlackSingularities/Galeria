@@ -11,6 +11,7 @@ let db
 // and ignored if it already exists, so this file stays the single source of
 // truth for the schema without needing a separate migration runner.
 const PHOTO_COLUMNS = [
+  ['display_name',   'TEXT'],
   ['taken_at',      'TEXT'],
   ['camera_make',   'TEXT'],
   ['camera_model',  'TEXT'],

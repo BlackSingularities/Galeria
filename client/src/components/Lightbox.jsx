@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { fileUrl, thumbUrl } from '../api'
+import { fileUrl, thumbUrl, createAlbumShare } from '../api'
+import { useToast } from './Feedback'
 import {
-  IconClose, IconPrev, IconNext, IconZoomIn, IconZoomOut,
-  IconInfo, IconPlay, IconPause, IconFullscreen, IconExitFullscreen,
+  IconClose, IconPrev, IconNext, IconZoomIn, IconZoomOut, IconDownload,
+  IconInfo, IconShare, IconPlay, IconPause, IconFullscreen, IconExitFullscreen,
   IconCamera, IconAperture, IconClock, IconCalendar, IconLayers,
 } from './icons'
 
@@ -22,7 +23,10 @@ function fmtDate(iso) {
 
 const SLIDESHOW_MS = 4200
 
-export default function Lightbox({ photos, index: initIndex, onClose, onIndexChange, mediaToken = null }) {
+export default function Lightbox({
+  photos, index: initIndex, onClose, onIndexChange, mediaToken = null,
+  allowShareDownload = false, albumSlug = null, protectedPublic = false,
+}) {
   const [idx, setIdx]     = useState(initIndex ?? 0)
   const [zoom, setZoom]   = useState(false)
   const [fade, setFade]   = useState(true)
@@ -30,8 +34,10 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
   const [showInfo, setShowInfo] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [shareExpiresIn, setShareExpiresIn] = useState('7d')
   const thumbRef = useRef(null)
   const backdropRef = useRef(null)
+  const toast = useToast()
   const total = photos.length
   const photo = photos[idx]
 
@@ -52,10 +58,11 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
 
   // Preload the neighbouring full-resolution images so navigation feels instant.
   useEffect(() => {
-    const preload = (i) => { const p = photos[i]; if (p) { const img = new Image(); img.src = fileUrl(p.filename, mediaToken) } }
+    const mediaSrc = (p) => protectedPublic ? thumbUrl(p.thumb, mediaToken) : fileUrl(p.filename, mediaToken)
+    const preload = (i) => { const p = photos[i]; if (p) { const img = new Image(); img.src = mediaSrc(p) } }
     preload((idx + 1) % total)
     preload((idx - 1 + total) % total)
-  }, [idx, total, photos])
+  }, [idx, total, photos, mediaToken, protectedPublic])
 
   useEffect(() => {
     const handler = (e) => {
@@ -113,25 +120,55 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
     touchStart.current = null
   }
 
+  const photoTitle = photo.display_name || photo.original_name || 'Zdjęcie'
+
+  const handleDownload = () => {
+    const a = document.createElement('a')
+    a.href = fileUrl(photo.filename, mediaToken)
+    a.download = photo.display_name || photo.original_name || photo.filename
+    a.click()
+  }
+
+  const handleShare = async () => {
+    try {
+      const share = albumSlug ? await createAlbumShare(albumSlug, shareExpiresIn, mediaToken) : { token: mediaToken }
+      const url = new URL(window.location.href)
+      url.searchParams.set('photo', photo.id)
+      if (share.token) url.searchParams.set('t', share.token)
+      else url.searchParams.delete('t')
+      const shareUrl = url.toString()
+      if (navigator.share) {
+        try { await navigator.share({ title: photoTitle, url: shareUrl }) } catch {}
+        return
+      }
+      await navigator.clipboard.writeText(shareUrl)
+      toast.success(share.token ? 'Link do zdjęcia skopiowany' : 'Publiczny link do zdjęcia skopiowany')
+    } catch {
+      toast.error('Nie udało się przygotować linku')
+    }
+  }
+
   const hasExif = photo.camera_make || photo.camera_model || photo.lens || photo.aperture || photo.shutter_speed || photo.iso || photo.focal_length
   const takenDate = fmtDate(photo.taken_at)
   const uploadDate = fmtDate(photo.created_at)
 
   return (
     <div
-      className="lb-backdrop"
+      className={`lb-backdrop ${protectedPublic ? 'public-protected' : ''}`}
       ref={backdropRef}
       tabIndex={-1}
       role="dialog"
       aria-modal="true"
-      aria-label={photo.original_name || 'Podgląd zdjęcia'}
+      aria-label={photoTitle}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onContextMenu={protectedPublic ? (e) => e.preventDefault() : undefined}
+      onCopy={protectedPublic ? (e) => e.preventDefault() : undefined}
     >
       {/* Top bar */}
       <div className="lb-bar">
         <div className="lb-bar-left">
           <span className="lb-counter">{idx + 1} / {total}</span>
-          <span className="lb-filename">{photo.original_name || photo.filename}</span>
+          <span className="lb-filename">{photoTitle}</span>
           {photo.width && <span className="lb-filename lb-filename-meta">{photo.width} × {photo.height}{megapixels && ` · ${megapixels} MP`} · {fmtBytes(photo.file_size)}</span>}
         </div>
         <div className="lb-bar-right">
@@ -143,12 +180,35 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
           <button className={`lb-btn ${showInfo ? 'active' : ''}`} onClick={() => setShowInfo(v => !v)} title="Szczegóły (I)">
             <IconInfo />
           </button>
+          {allowShareDownload && (
+            <>
+              <select
+                className="lb-share-expiry"
+                value={shareExpiresIn}
+                onChange={e => setShareExpiresIn(e.target.value)}
+                title="Ważność linku"
+              >
+                <option value="1h">1 h</option>
+                <option value="24h">24 h</option>
+                <option value="7d">7 dni</option>
+                <option value="30d">30 dni</option>
+              </select>
+              <button className="lb-btn" onClick={handleShare} title="Udostępnij">
+                <IconShare />
+              </button>
+            </>
+          )}
           <button className={`lb-btn ${zoom ? 'active' : ''}`} onClick={() => setZoom(v => !v)} title="Zoom 1:1 (Z)">
             {zoom ? <IconZoomOut /> : <IconZoomIn />}
           </button>
           <button className="lb-btn lb-btn-hide-mobile" onClick={toggleFullscreen} title="Pełny ekran (F)">
             {isFullscreen ? <IconExitFullscreen /> : <IconFullscreen />}
           </button>
+          {allowShareDownload && (
+            <button className="lb-btn" onClick={handleDownload} title="Pobierz oryginał">
+              <IconDownload />
+            </button>
+          )}
           <button className="lb-btn" onClick={onClose} title="Zamknij (Esc)">
             <IconClose />
           </button>
@@ -181,8 +241,8 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
 
           <img
             key={photo.id}
-            src={fileUrl(photo.filename, mediaToken)}
-            alt={photo.original_name || ''}
+            src={protectedPublic ? thumbUrl(photo.thumb, mediaToken) : fileUrl(photo.filename, mediaToken)}
+            alt={photo.display_name || ''}
             className="lb-img"
             style={{
               opacity: fade && loaded ? 1 : 0,
@@ -198,7 +258,7 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
         {/* Details panel */}
         <aside className={`lb-info ${showInfo ? 'open' : ''}`} aria-hidden={!showInfo}>
           <div className="lb-info-inner">
-            <h3 className="lb-info-title">{photo.original_name || 'Zdjęcie'}</h3>
+            <h3 className="lb-info-title">{photoTitle}</h3>
             {photo.album_name && <p className="lb-info-album">{photo.album_name}</p>}
 
             <div className="lb-info-section">
@@ -224,6 +284,12 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
                 )}
                 {takenDate && <div className="lb-info-row"><IconClock /><span>Wykonano {takenDate}</span></div>}
               </div>
+            )}
+
+            {allowShareDownload && (
+              <button className="btn btn-ghost" style={{ width: '100%', marginTop: 8 }} onClick={handleDownload}>
+                <IconDownload /> Pobierz oryginał
+              </button>
             )}
 
           </div>

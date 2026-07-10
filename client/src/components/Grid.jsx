@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import Lightbox from './Lightbox'
 import { thumbUrl, fileUrl } from '../api'
-import { IconCheck, IconTrash, IconImage, IconGrip, IconStar } from './icons'
+import { IconCheck, IconTrash, IconImage, IconGrip, IconStar, IconEdit } from './icons'
 
 function PhotoImg({ photo, mediaToken }) {
   const [loaded, setLoaded] = useState(false)
@@ -14,10 +14,11 @@ function PhotoImg({ photo, mediaToken }) {
       )}
       <img
         src={thumbUrl(photo.thumb, mediaToken) || fileUrl(photo.filename, mediaToken)}
-        alt={photo.original_name || ''}
+        alt={photo.display_name || ''}
         loading="lazy"
         onLoad={() => setLoaded(true)}
         style={{ opacity: loaded ? 1 : 0 }}
+        draggable={false}
       />
     </div>
   )
@@ -27,8 +28,9 @@ const BATCH_SIZE = 24
 
 export default function Grid({
   photos, adminMode = false, selectable = false, selected = [], onSelect, onDelete, syncUrl = false,
-  reorderable = false, onReorder, onSetCover, onTogglePortfolio, mediaToken = null,
-  infiniteScroll = !reorderable,
+  reorderable = false, onReorder, onSetCover, onTogglePortfolio, onEditPhoto, mediaToken = null,
+  infiniteScroll = !reorderable, allowShareDownload = false, albumSlug = null, protectedPublic = false,
+  tileSizeStorageKey = 'gallery_tile_size', showTileSizeControl = true,
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const dragFrom = useRef(null)
@@ -41,6 +43,7 @@ export default function Grid({
     return i >= 0 ? i : null
   })
   const openedFromUrl = useRef(lightboxIdx !== null)
+  const [tileSize, setTileSize] = useState(() => localStorage.getItem(tileSizeStorageKey) || 'medium')
 
   // Render photos in growing batches instead of all at once — keeps the
   // initial paint light and defers offscreen images (native loading="lazy"
@@ -132,10 +135,37 @@ export default function Grid({
   }
 
   const visiblePhotos = infiniteScroll ? photos.slice(0, visibleCount) : photos
+  const updateTileSize = (size) => {
+    setTileSize(size)
+    localStorage.setItem(tileSizeStorageKey, size)
+  }
+  const showTileInfo = !selectable
 
   return (
     <>
-      <div className="photo-grid">
+      {showTileSizeControl && (
+        <div className="grid-toolbar">
+          <span className="grid-toolbar-label">Wielkość kafelków</span>
+          <div className="grid-size-buttons" role="group" aria-label="Wielkość kafelków">
+            {[
+              ['small', 'Małe'],
+              ['medium', 'Średnie'],
+              ['large', 'Duże'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                className={`btn btn-sm ${tileSize === value ? '' : 'btn-ghost'}`}
+                onClick={() => updateTileSize(value)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className={`photo-grid tile-${tileSize} ${protectedPublic ? 'public-protected' : ''}`}>
         {visiblePhotos.map((photo, i) => (
           <div
             key={photo.id}
@@ -149,6 +179,8 @@ export default function Grid({
             onDragOver={reorderable ? handleDragOver(i) : undefined}
             onDragEnd={() => { dragFrom.current = null; setDragOver(null) }}
             onDrop={reorderable ? handleDrop(i) : undefined}
+            onContextMenu={protectedPublic ? (e) => e.preventDefault() : undefined}
+            onCopy={protectedPublic ? (e) => e.preventDefault() : undefined}
             onClick={() => {
               if (selectable && onSelect) onSelect(photo.id)
               else openLightbox(i)
@@ -161,15 +193,18 @@ export default function Grid({
             }}
           >
             <PhotoImg photo={photo} mediaToken={mediaToken} />
+            {protectedPublic && <div className="photo-watermark" aria-hidden="true">Adam Rędzikowski</div>}
             <div className="photo-item-overlay" />
-            <div className="photo-item-info">
-              {photo.original_name && <div className="photo-item-name">{photo.original_name}</div>}
-              {(photo.camera_model || photo.taken_at) && (
+            {showTileInfo && (photo.display_name || photo.camera_model || photo.taken_at) && (
+              <div className="photo-item-info">
+                {photo.display_name && <div className="photo-item-name">{photo.display_name}</div>}
+                {(photo.camera_model || photo.taken_at) && (
                 <div className="photo-item-meta">
                   {[photo.camera_model, photo.taken_at && new Date(photo.taken_at).getFullYear()].filter(Boolean).join(' · ')}
                 </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
             {reorderable && <div className="photo-item-grip"><IconGrip /></div>}
             {photo.is_cover ? <div className="photo-item-cover-badge" title="Okładka albumu"><IconStar /></div> : null}
             {adminMode && (
@@ -196,6 +231,15 @@ export default function Grid({
                       title={photo.is_portfolio ? 'Usuń z portfolio' : 'Dodaj do portfolio'}
                     >
                       <IconStar />
+                    </button>
+                  )}
+                  {onEditPhoto && (
+                    <button
+                      className="btn btn-ghost btn-sm photo-item-action"
+                      onClick={(e) => { e.stopPropagation(); onEditPhoto(photo) }}
+                      title="Edytuj dane zdjęcia"
+                    >
+                      <IconEdit />
                     </button>
                   )}
                   {onDelete && (
@@ -225,6 +269,9 @@ export default function Grid({
           onClose={closeLightbox}
           onIndexChange={changeIndex}
           mediaToken={mediaToken}
+          allowShareDownload={allowShareDownload}
+          albumSlug={albumSlug}
+          protectedPublic={protectedPublic}
         />
       )}
     </>

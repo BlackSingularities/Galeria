@@ -29,6 +29,7 @@ async function req(method, path, body, token) {
 export const getPortfolio  = () => req('GET', '/portfolio')
 export const verifyAlbum   = (slug, password) => req('POST', `/albums/${slug}/verify`, { password })
 export const getAlbum      = (slug, token)    => req('GET',  `/albums/${slug}`, null, token)
+export const createAlbumShare = (slug, expiresIn, token) => req('POST', `/albums/${slug}/share`, { expiresIn }, token)
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 export const adminLogin       = (password) => req('POST', '/admin/login', { password })

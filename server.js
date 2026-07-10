@@ -66,10 +66,9 @@ const authLimiter = rateLimit({
 // Listing endpoints already require a password/token, but the raw file URLs
 // used to be served unconditionally by express.static — anyone who learned a
 // filename could fetch it forever. This middleware re-checks access on every
-// single file request: portfolio photos (and photos in password-less albums)
-// stay public and cacheable; photos that belong to a password-protected album
-// require a valid token that matches the album's *current* token_version, so
-// changing the album password immediately revokes every previously issued link.
+// single file request. Thumbnails stay public for display; original portfolio
+// uploads require admin access, while album originals require album/admin access
+// when the album is password-protected.
 function protectMedia(req, res, next) {
   const db = getDb()
   const filename = path.basename(req.path)
@@ -79,17 +78,19 @@ function protectMedia(req, res, next) {
     FROM photos p LEFT JOIN albums a ON a.id = p.album_id WHERE p.${column} = ?`).get(filename)
 
   if (!photo) return res.status(404).end()
-  if (photo.is_portfolio || !photo.album_id || !photo.album_password) return next()
+  if (isThumb) return next()
 
   const token = req.query.t || req.headers.authorization?.replace('Bearer ', '')
   try {
     const p = jwt.verify(token, JWT_SECRET)
     if (p.admin) return next()
-    if (p.albumId === photo.album_id && (p.tokenVersion || 0) === (photo.token_version || 0)) return next()
-    throw new Error()
-  } catch {
-    return res.status(403).json({ error: 'Brak dostępu' })
-  }
+    if (photo.album_id && p.albumId === photo.album_id && (p.tokenVersion || 0) === (photo.token_version || 0)) return next()
+  } catch {}
+
+  if (photo.album_id && !photo.album_password) return next()
+  if (!photo.album_id && !photo.is_portfolio) return next()
+
+  return res.status(403).json({ error: 'Brak dostępu' })
 }
 
 // Static files (served directly — nginx proxy strips /galeria prefix)
@@ -233,6 +234,10 @@ function issueAlbumToken(album) {
   return jwt.sign({ albumId: album.id, tokenVersion: album.token_version || 0 }, JWT_SECRET, { expiresIn: '30d' })
 }
 
+function issueAlbumShareToken(album, expiresIn) {
+  return jwt.sign({ albumId: album.id, tokenVersion: album.token_version || 0, shared: true }, JWT_SECRET, { expiresIn })
+}
+
 function requireAlbumAccess(req, res, next) {
   const db = getDb()
   const album = db.prepare('SELECT * FROM albums WHERE slug = ?').get(req.params.slug)
@@ -241,7 +246,7 @@ function requireAlbumAccess(req, res, next) {
 
   if (!album.password) return next() // public album
 
-  const token = req.headers.authorization?.replace('Bearer ', '')
+  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.t
   try {
     const p = jwt.verify(token, JWT_SECRET)
     if (p.admin) return next()
@@ -261,7 +266,9 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
 app.get('/api/portfolio', (req, res) => {
   const db = getDb()
   const photos = db.prepare(`
-    SELECT p.*, a.name as album_name, a.slug as album_slug
+    SELECT p.id, p.thumb, p.display_name, p.width, p.height, p.file_size, p.sort_order, p.is_portfolio,
+      p.created_at, p.taken_at, p.camera_make, p.camera_model, p.lens, p.focal_length,
+      p.aperture, p.shutter_speed, p.iso, p.blur_data_url
     FROM photos p LEFT JOIN albums a ON p.album_id = a.id
     WHERE p.is_portfolio = 1
     ORDER BY p.sort_order ASC, p.created_at DESC
@@ -278,12 +285,24 @@ app.post('/api/albums/:slug/verify', authLimiter, (req, res) => {
   res.json({ ok: true, token: issueAlbumToken(album) })
 })
 
+app.post('/api/albums/:slug/share', requireAlbumAccess, (req, res) => {
+  const ttlMap = {
+    '1h': '1h',
+    '24h': '24h',
+    '7d': '7d',
+    '30d': '30d',
+  }
+  const expiresIn = ttlMap[req.body?.expiresIn] || ttlMap['7d']
+  if (!req.album.password) return res.json({ ok: true, token: null, expiresIn: null })
+  res.json({ ok: true, token: issueAlbumShareToken(req.album, expiresIn), expiresIn })
+})
+
 app.get('/api/albums/:slug', requireAlbumAccess, (req, res) => {
   const db = getDb()
   const photos = db.prepare(
     'SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order ASC, created_at ASC'
   ).all(req.album.id)
-  res.json({ album: { ...req.album, password: undefined, token_version: undefined }, photos })
+  res.json({ album: { ...req.album, has_password: !!req.album.password, password: undefined, token_version: undefined }, photos })
 })
 
 // ── Admin API ─────────────────────────────────────────────────────────────────
@@ -449,9 +468,11 @@ app.put('/api/admin/photos/reorder', requireAdmin, (req, res) => {
 
 app.put('/api/admin/photos/:id', requireAdmin, (req, res) => {
   const db = getDb()
-  const { is_portfolio, sort_order, original_name, album_id } = req.body
-  db.prepare('UPDATE photos SET is_portfolio=?,sort_order=?,original_name=?,album_id=? WHERE id=?')
-    .run(is_portfolio ? 1 : 0, sort_order ?? 0, original_name, album_id ?? null, req.params.id)
+  const { is_portfolio, sort_order, original_name, display_name, album_id, taken_at, camera_make, camera_model, lens, focal_length, aperture, shutter_speed, iso } = req.body
+  db.prepare(`UPDATE photos SET is_portfolio=?,sort_order=?,original_name=?,display_name=?,album_id=?,
+    taken_at=?,camera_make=?,camera_model=?,lens=?,focal_length=?,aperture=?,shutter_speed=?,iso=? WHERE id=?`)
+    .run(is_portfolio ? 1 : 0, sort_order ?? 0, original_name || null, display_name || null, album_id ?? null,
+      taken_at || null, camera_make || null, camera_model || null, lens || null, focal_length || null, aperture || null, shutter_speed || null, iso || null, req.params.id)
   res.json({ ok: true })
 })
 

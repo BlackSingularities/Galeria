@@ -274,6 +274,70 @@ function AlbumModal({ album, onClose, onSave }) {
   )
 }
 
+function PhotoModal({ photo, onClose, onSave }) {
+  const [form, setForm] = useState({
+    display_name: photo.display_name || '',
+    original_name: photo.original_name || '',
+    taken_at: photo.taken_at || '',
+    camera_make: photo.camera_make || '',
+    camera_model: photo.camera_model || '',
+    lens: photo.lens || '',
+    focal_length: photo.focal_length || '',
+    aperture: photo.aperture || '',
+    shutter_speed: photo.shutter_speed || '',
+    iso: photo.iso || '',
+  })
+  const [saving, setSaving] = useState(false)
+  const toast = useToast()
+  const set = (key) => (e) => setForm(prev => ({ ...prev, [key]: e.target.value }))
+
+  const save = async (e) => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await adminUpdatePhoto(photo.id, { ...photo, ...form })
+      toast.success('Dane zdjęcia zapisane')
+      onSave()
+    } catch {
+      toast.error('Nie udało się zapisać danych zdjęcia')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal photo-modal">
+        <h3 className="modal-title">Edytuj zdjęcie</h3>
+        <form onSubmit={save}>
+          <div className="field">
+            <label>Nazwa widoczna</label>
+            <input className="input" value={form.display_name} onChange={set('display_name')} placeholder="Puste = bez podpisu na kafelku" autoFocus />
+          </div>
+          <div className="field">
+            <label>Nazwa pliku / opis techniczny</label>
+            <input className="input" value={form.original_name} onChange={set('original_name')} />
+          </div>
+          <div className="form-grid-2">
+            <div className="field"><label>Data wykonania</label><input className="input" value={form.taken_at} onChange={set('taken_at')} placeholder="YYYY-MM-DD" /></div>
+            <div className="field"><label>Producent aparatu</label><input className="input" value={form.camera_make} onChange={set('camera_make')} /></div>
+            <div className="field"><label>Model aparatu</label><input className="input" value={form.camera_model} onChange={set('camera_model')} /></div>
+            <div className="field"><label>Obiektyw</label><input className="input" value={form.lens} onChange={set('lens')} /></div>
+            <div className="field"><label>Ogniskowa</label><input className="input" value={form.focal_length} onChange={set('focal_length')} /></div>
+            <div className="field"><label>Przysłona</label><input className="input" value={form.aperture} onChange={set('aperture')} /></div>
+            <div className="field"><label>Czas</label><input className="input" value={form.shutter_speed} onChange={set('shutter_speed')} /></div>
+            <div className="field"><label>ISO</label><input className="input" value={form.iso} onChange={set('iso')} /></div>
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Anuluj</button>
+            <button type="submit" className="btn" disabled={saving}>{saving ? 'Zapisywanie…' : 'Zapisz'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function StatCard({ icon, label, value, sub }) {
   return (
@@ -357,6 +421,7 @@ function TabPortfolio() {
   const [photos, setPhotos]   = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState([])
+  const [editPhoto, setEditPhoto] = useState(null)
   const toast = useToast()
   const confirm = useConfirm()
 
@@ -422,7 +487,15 @@ function TabPortfolio() {
           selected={selected}
           onSelect={toggleSelect}
           onDelete={deletePhoto}
+          onEditPhoto={setEditPhoto}
           mediaToken={adminToken()}
+        />
+      )}
+      {editPhoto && (
+        <PhotoModal
+          photo={editPhoto}
+          onClose={() => setEditPhoto(null)}
+          onSave={() => { setEditPhoto(null); load() }}
         />
       )}
     </div>
@@ -509,6 +582,7 @@ function TabAlbumManage({ album, onBack, onAlbumUpdated }) {
   const [photos, setPhotos]   = useState([])
   const [loading, setLoading] = useState(true)
   const [editModal, setEditModal] = useState(false)
+  const [editPhoto, setEditPhoto] = useState(null)
   const toast = useToast()
   const confirm = useConfirm()
 
@@ -586,6 +660,7 @@ function TabAlbumManage({ album, onBack, onAlbumUpdated }) {
           onSelect={() => {}}
           onDelete={deletePhoto}
           onSetCover={setCover}
+          onEditPhoto={setEditPhoto}
           mediaToken={adminToken()}
         />
       )}
@@ -600,6 +675,13 @@ function TabAlbumManage({ album, onBack, onAlbumUpdated }) {
             const updated = albums.find(a => a.id === album.id)
             onAlbumUpdated?.(updated || album)
           }}
+        />
+      )}
+      {editPhoto && (
+        <PhotoModal
+          photo={editPhoto}
+          onClose={() => setEditPhoto(null)}
+          onSave={() => { setEditPhoto(null); load() }}
         />
       )}
     </div>
@@ -639,6 +721,7 @@ function TabPhotos() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter]   = useState('all')
   const [query, setQuery]     = useState('')
+  const [editPhoto, setEditPhoto] = useState(null)
   const toast = useToast()
   const confirm = useConfirm()
 
@@ -665,7 +748,7 @@ function TabPhotos() {
       : photos.filter(p => !p.is_portfolio)
     if (query.trim()) {
       const q = query.trim().toLowerCase()
-      list = list.filter(p => p.original_name?.toLowerCase().includes(q) || p.album_name?.toLowerCase().includes(q))
+      list = list.filter(p => p.display_name?.toLowerCase().includes(q) || p.original_name?.toLowerCase().includes(q) || p.album_name?.toLowerCase().includes(q))
     }
     return list
   }, [photos, filter, query])
@@ -697,7 +780,15 @@ function TabPhotos() {
           onSelect={() => {}}
           onDelete={deletePhoto}
           onTogglePortfolio={togglePortfolio}
+          onEditPhoto={setEditPhoto}
           mediaToken={adminToken()}
+        />
+      )}
+      {editPhoto && (
+        <PhotoModal
+          photo={editPhoto}
+          onClose={() => setEditPhoto(null)}
+          onSave={() => { setEditPhoto(null); load() }}
         />
       )}
     </div>
