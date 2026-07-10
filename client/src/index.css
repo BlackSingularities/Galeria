@@ -153,9 +153,27 @@ a { color: inherit; text-decoration: none; }
   columns: 3; column-gap: 3px;
   margin-top: 8px;
 }
+.photo-grid.stable-masonry {
+  columns: auto;
+  display: grid;
+  grid-template-columns: repeat(var(--masonry-columns, 3), minmax(0, 1fr));
+  gap: 3px;
+}
+.photo-column {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.photo-grid.stable-masonry .photo-item {
+  margin-bottom: 0;
+}
 .photo-grid.tile-small { columns: 4; }
 .photo-grid.tile-medium { columns: 3; }
 .photo-grid.tile-large { columns: 2; }
+.photo-grid.stable-masonry.tile-small,
+.photo-grid.stable-masonry.tile-medium,
+.photo-grid.stable-masonry.tile-large { columns: auto; }
 @media (max-width: 1100px) { .photo-grid { columns: 2; } }
 @media (max-width: 640px)  { .photo-grid { columns: 1; } }
 @media (max-width: 1100px) {

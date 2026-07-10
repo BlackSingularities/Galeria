@@ -44,6 +44,7 @@ export default function Grid({
   })
   const openedFromUrl = useRef(lightboxIdx !== null)
   const [tileSize, setTileSize] = useState(() => localStorage.getItem(tileSizeStorageKey) || 'medium')
+  const [columnCount, setColumnCount] = useState(3)
 
   // Render photos in growing batches instead of all at once — keeps the
   // initial paint light and defers offscreen images (native loading="lazy"
@@ -72,6 +73,18 @@ export default function Grid({
     observer.observe(el)
     return () => observer.disconnect()
   }, [infiniteScroll, visibleCount, photos.length])
+
+  useEffect(() => {
+    const updateColumns = () => {
+      const width = window.innerWidth
+      if (width <= 640) return setColumnCount(1)
+      if (width <= 1100) return setColumnCount(2)
+      setColumnCount(tileSize === 'small' ? 4 : tileSize === 'large' ? 2 : 3)
+    }
+    updateColumns()
+    window.addEventListener('resize', updateColumns)
+    return () => window.removeEventListener('resize', updateColumns)
+  }, [tileSize])
 
   useEffect(() => {
     if (!openedFromUrl.current) return
@@ -140,6 +153,106 @@ export default function Grid({
     localStorage.setItem(tileSizeStorageKey, size)
   }
   const showTileInfo = !selectable
+  const stableMasonry = infiniteScroll && !reorderable
+  const masonryColumns = Array.from({ length: columnCount }, () => ({ items: [], height: 0 }))
+  if (stableMasonry) {
+    visiblePhotos.forEach((photo, index) => {
+      const ratio = photo.width && photo.height ? photo.height / photo.width : 0.75
+      const target = masonryColumns.reduce((min, col, i) => col.height < masonryColumns[min].height ? i : min, 0)
+      masonryColumns[target].items.push({ photo, index })
+      masonryColumns[target].height += ratio
+    })
+  }
+
+  const renderPhotoCard = (photo, i) => (
+    <div
+      key={photo.id}
+      data-photo-id={photo.id}
+      className={`photo-item ${photo.is_portfolio ? 'is-portfolio' : ''} ${selected.includes(photo.id) ? 'selected' : ''} ${dragOver === i ? 'drag-over' : ''}`}
+      tabIndex={0}
+      role="button"
+      aria-label={photo.original_name || 'Otwórz zdjęcie'}
+      draggable={reorderable}
+      onDragStart={reorderable ? handleDragStart(i) : undefined}
+      onDragOver={reorderable ? handleDragOver(i) : undefined}
+      onDragEnd={() => { dragFrom.current = null; setDragOver(null) }}
+      onDrop={reorderable ? handleDrop(i) : undefined}
+      onContextMenu={protectedPublic ? (e) => e.preventDefault() : undefined}
+      onCopy={protectedPublic ? (e) => e.preventDefault() : undefined}
+      onClick={() => {
+        if (selectable && onSelect) onSelect(photo.id)
+        else openLightbox(i)
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        if (selectable && onSelect) onSelect(photo.id)
+        else openLightbox(i)
+      }}
+    >
+      <PhotoImg photo={photo} mediaToken={mediaToken} />
+      <div className="photo-item-overlay" />
+      {showTileInfo && (photo.display_name || photo.camera_model || photo.taken_at) && (
+        <div className="photo-item-info">
+          {photo.display_name && <div className="photo-item-name">{photo.display_name}</div>}
+          {(photo.camera_model || photo.taken_at) && (
+            <div className="photo-item-meta">
+              {[photo.camera_model, photo.taken_at && new Date(photo.taken_at).getFullYear()].filter(Boolean).join(' · ')}
+            </div>
+          )}
+        </div>
+      )}
+      {reorderable && <div className="photo-item-grip"><IconGrip /></div>}
+      {photo.is_cover ? <div className="photo-item-cover-badge" title="Okładka albumu"><IconStar /></div> : null}
+      {adminMode && (
+        <>
+          {selectable && (
+            <div className="photo-item-check">
+              {selected.includes(photo.id) && <IconCheck />}
+            </div>
+          )}
+          <div className="photo-item-actions">
+            {onSetCover && !photo.is_cover && (
+              <button
+                className="btn btn-ghost btn-sm photo-item-action"
+                onClick={(e) => { e.stopPropagation(); onSetCover(photo) }}
+                title="Ustaw jako okładkę albumu"
+              >
+                <IconStar />
+              </button>
+            )}
+            {onTogglePortfolio && (
+              <button
+                className={`btn btn-sm photo-item-action ${photo.is_portfolio ? '' : 'btn-ghost'}`}
+                onClick={(e) => { e.stopPropagation(); onTogglePortfolio(photo) }}
+                title={photo.is_portfolio ? 'Usuń z portfolio' : 'Dodaj do portfolio'}
+              >
+                <IconStar />
+              </button>
+            )}
+            {onEditPhoto && (
+              <button
+                className="btn btn-ghost btn-sm photo-item-action"
+                onClick={(e) => { e.stopPropagation(); onEditPhoto(photo) }}
+                title="Edytuj dane zdjęcia"
+              >
+                <IconEdit />
+              </button>
+            )}
+            {onDelete && (
+              <button
+                className="btn btn-danger btn-sm photo-item-action"
+                onClick={(e) => { e.stopPropagation(); onDelete(photo.id) }}
+                title="Usuń"
+              >
+                <IconTrash />
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
 
   return (
     <>
@@ -165,96 +278,17 @@ export default function Grid({
         </div>
       )}
 
-      <div className={`photo-grid tile-${tileSize} ${protectedPublic ? 'public-protected' : ''}`}>
-        {visiblePhotos.map((photo, i) => (
-          <div
-            key={photo.id}
-            data-photo-id={photo.id}
-            className={`photo-item ${photo.is_portfolio ? 'is-portfolio' : ''} ${selected.includes(photo.id) ? 'selected' : ''} ${dragOver === i ? 'drag-over' : ''}`}
-            tabIndex={0}
-            role="button"
-            aria-label={photo.original_name || 'Otwórz zdjęcie'}
-            draggable={reorderable}
-            onDragStart={reorderable ? handleDragStart(i) : undefined}
-            onDragOver={reorderable ? handleDragOver(i) : undefined}
-            onDragEnd={() => { dragFrom.current = null; setDragOver(null) }}
-            onDrop={reorderable ? handleDrop(i) : undefined}
-            onContextMenu={protectedPublic ? (e) => e.preventDefault() : undefined}
-            onCopy={protectedPublic ? (e) => e.preventDefault() : undefined}
-            onClick={() => {
-              if (selectable && onSelect) onSelect(photo.id)
-              else openLightbox(i)
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter' && e.key !== ' ') return
-              e.preventDefault()
-              if (selectable && onSelect) onSelect(photo.id)
-              else openLightbox(i)
-            }}
-          >
-            <PhotoImg photo={photo} mediaToken={mediaToken} />
-            <div className="photo-item-overlay" />
-            {showTileInfo && (photo.display_name || photo.camera_model || photo.taken_at) && (
-              <div className="photo-item-info">
-                {photo.display_name && <div className="photo-item-name">{photo.display_name}</div>}
-                {(photo.camera_model || photo.taken_at) && (
-                <div className="photo-item-meta">
-                  {[photo.camera_model, photo.taken_at && new Date(photo.taken_at).getFullYear()].filter(Boolean).join(' · ')}
-                </div>
-                )}
-              </div>
-            )}
-            {reorderable && <div className="photo-item-grip"><IconGrip /></div>}
-            {photo.is_cover ? <div className="photo-item-cover-badge" title="Okładka albumu"><IconStar /></div> : null}
-            {adminMode && (
-              <>
-                {selectable && (
-                  <div className="photo-item-check">
-                    {selected.includes(photo.id) && <IconCheck />}
-                  </div>
-                )}
-                <div className="photo-item-actions">
-                  {onSetCover && !photo.is_cover && (
-                    <button
-                      className="btn btn-ghost btn-sm photo-item-action"
-                      onClick={(e) => { e.stopPropagation(); onSetCover(photo) }}
-                      title="Ustaw jako okładkę albumu"
-                    >
-                      <IconStar />
-                    </button>
-                  )}
-                  {onTogglePortfolio && (
-                    <button
-                      className={`btn btn-sm photo-item-action ${photo.is_portfolio ? '' : 'btn-ghost'}`}
-                      onClick={(e) => { e.stopPropagation(); onTogglePortfolio(photo) }}
-                      title={photo.is_portfolio ? 'Usuń z portfolio' : 'Dodaj do portfolio'}
-                    >
-                      <IconStar />
-                    </button>
-                  )}
-                  {onEditPhoto && (
-                    <button
-                      className="btn btn-ghost btn-sm photo-item-action"
-                      onClick={(e) => { e.stopPropagation(); onEditPhoto(photo) }}
-                      title="Edytuj dane zdjęcia"
-                    >
-                      <IconEdit />
-                    </button>
-                  )}
-                  {onDelete && (
-                    <button
-                      className="btn btn-danger btn-sm photo-item-action"
-                      onClick={(e) => { e.stopPropagation(); onDelete(photo.id) }}
-                      title="Usuń"
-                    >
-                      <IconTrash />
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        ))}
+      <div
+        className={`photo-grid ${stableMasonry ? 'stable-masonry' : ''} tile-${tileSize} ${protectedPublic ? 'public-protected' : ''}`}
+        style={stableMasonry ? { '--masonry-columns': columnCount } : undefined}
+      >
+        {stableMasonry
+          ? masonryColumns.map((column, columnIndex) => (
+            <div className="photo-column" key={columnIndex}>
+              {column.items.map(({ photo, index }) => renderPhotoCard(photo, index))}
+            </div>
+          ))
+          : visiblePhotos.map((photo, i) => renderPhotoCard(photo, i))}
       </div>
 
       {infiniteScroll && visibleCount < photos.length && (
