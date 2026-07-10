@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { fileUrl, thumbUrl } from '../api'
-import { useToast } from './Feedback'
 import {
-  IconClose, IconPrev, IconNext, IconZoomIn, IconZoomOut, IconDownload,
-  IconInfo, IconShare, IconPlay, IconPause, IconFullscreen, IconExitFullscreen,
+  IconClose, IconPrev, IconNext, IconZoomIn, IconZoomOut,
+  IconInfo, IconPlay, IconPause, IconFullscreen, IconExitFullscreen,
   IconCamera, IconAperture, IconClock, IconCalendar, IconLayers,
 } from './icons'
 
@@ -33,7 +32,6 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
   const [isFullscreen, setIsFullscreen] = useState(false)
   const thumbRef = useRef(null)
   const backdropRef = useRef(null)
-  const toast = useToast()
   const total = photos.length
   const photo = photos[idx]
 
@@ -115,29 +113,6 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
     touchStart.current = null
   }
 
-  const handleDownload = () => {
-    const a = document.createElement('a')
-    a.href = fileUrl(photo.filename, mediaToken)
-    a.download = photo.original_name || photo.filename
-    a.click()
-  }
-
-  const handleShare = async () => {
-    const url = new URL(window.location.href)
-    url.searchParams.set('photo', photo.id)
-    const shareUrl = url.toString()
-    if (navigator.share) {
-      try { await navigator.share({ title: photo.original_name || 'Zdjęcie', url: shareUrl }) } catch {}
-      return
-    }
-    try {
-      await navigator.clipboard.writeText(shareUrl)
-      toast.success('Link do zdjęcia skopiowany do schowka')
-    } catch {
-      toast.error('Nie udało się skopiować linku')
-    }
-  }
-
   const hasExif = photo.camera_make || photo.camera_model || photo.lens || photo.aperture || photo.shutter_speed || photo.iso || photo.focal_length
   const takenDate = fmtDate(photo.taken_at)
   const uploadDate = fmtDate(photo.created_at)
@@ -168,17 +143,11 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
           <button className={`lb-btn ${showInfo ? 'active' : ''}`} onClick={() => setShowInfo(v => !v)} title="Szczegóły (I)">
             <IconInfo />
           </button>
-          <button className="lb-btn" onClick={handleShare} title="Udostępnij">
-            <IconShare />
-          </button>
           <button className={`lb-btn ${zoom ? 'active' : ''}`} onClick={() => setZoom(v => !v)} title="Zoom 1:1 (Z)">
             {zoom ? <IconZoomOut /> : <IconZoomIn />}
           </button>
           <button className="lb-btn lb-btn-hide-mobile" onClick={toggleFullscreen} title="Pełny ekran (F)">
             {isFullscreen ? <IconExitFullscreen /> : <IconFullscreen />}
-          </button>
-          <button className="lb-btn" onClick={handleDownload} title="Pobierz oryginał">
-            <IconDownload />
           </button>
           <button className="lb-btn" onClick={onClose} title="Zamknij (Esc)">
             <IconClose />
@@ -234,7 +203,7 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
 
             <div className="lb-info-section">
               <div className="lb-info-row"><IconLayers /><span>{photo.width} × {photo.height}px{megapixels && ` · ${megapixels} MP`}</span></div>
-              <div className="lb-info-row"><IconDownload /><span>{fmtBytes(photo.file_size)}{photo.original_quality ? ' · oryginał 1:1' : ''}</span></div>
+              <div className="lb-info-row"><IconLayers /><span>{fmtBytes(photo.file_size)}{photo.original_quality ? ' · oryginał 1:1' : ''}</span></div>
               {uploadDate && <div className="lb-info-row"><IconCalendar /><span>Dodano {uploadDate}</span></div>}
             </div>
 
@@ -257,9 +226,6 @@ export default function Lightbox({ photos, index: initIndex, onClose, onIndexCha
               </div>
             )}
 
-            <button className="btn btn-ghost" style={{ width: '100%', marginTop: 8 }} onClick={handleDownload}>
-              <IconDownload /> Pobierz oryginał
-            </button>
           </div>
         </aside>
       </div>
