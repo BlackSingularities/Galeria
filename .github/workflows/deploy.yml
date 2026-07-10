@@ -34,4 +34,4 @@ jobs:
           SSH_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST \
-            "cd /opt/apps/galeria && sudo docker compose build --no-cache && sudo docker compose up -d && sudo docker image prune -f"
+            "cd /opt/apps/galeria && sudo docker compose build && sudo docker compose up -d && sudo docker image prune -f"
